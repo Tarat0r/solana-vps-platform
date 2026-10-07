@@ -1,0 +1,59 @@
+@startuml
+top to bottom direction
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam nodesep 80
+skinparam ranksep 80
+skinparam linetype polyline
+skinparam ArrowFontSize 12
+
+package "Client Entities" #EAF2FF {
+  component "Browser + Wallet" as Browser #EAF2FF
+  component "SSH Client" as SSH #EAF2FF
+  Browser -[hidden]right-> SSH
+}
+package "Backend Process" #EAF7ED {
+  interface "Portal / Auth API" as WebAPI #EAF7ED
+  component "Portal / Orders / Auth Gateway" as Backend #EAF7ED
+  component "DB\nOrders + PaymentAttempts" as DB #EAF7ED
+}
+package "Linux Test VM / VPS" #FFF0D9 {
+  interface "SSH Protocol" as SSHAPI #FFF0D9
+  component "OpenSSH" as SSHD #FFF0D9
+  component "pam_solana.so" as PAM #FFF0D9
+  component "solana-authd" as AuthD #FFF0D9
+  artifact "server.toml" as Config #FFF0D9
+}
+package "Solana Services" #EDE4FF {
+  component "Solana RPC\nPayments + access state" as RPC #EDE4FF
+}
+
+Browser -[dashed]down-> WebAPI : Portal / wallet signatures
+Backend -up- WebAPI
+WebAPI -[hidden]right-> AuthD
+SSH -[dashed]down-> SSHAPI : SSH login
+SSHD -up- SSHAPI
+Backend -[dashed]down-> DB : Persist orders / payment attempts
+SSHD -[dashed]down-> PAM : PAM authentication
+PAM -[dashed]down-> AuthD : Authenticate via Unix socket
+AuthD -[dashed]right-> Config : Read local configuration
+AuthD -[dashed,norank]left-> WebAPI : HTTPS: publish challenge / poll signed response
+Browser -[dashed]down--> RPC : Submit signed payment / grant transactions
+Backend -[dashed]down-> RPC : Register server / verify payment receipts
+AuthD -[dashed]down-> RPC : Read finalized subscription / grants
+
+note bottom of AuthD
+  Verifies wallet signatures and on-chain grants.
+  The gateway relays challenges and responses.
+end note
+
+legend bottom
+  |= Color |= Meaning |
+  |<#EAF2FF> Light blue | Client entities |
+  |<#EAF7ED> Light green | Provider backend |
+  |<#FFF0D9> Light orange | VPS / SSH access components |
+  |<#EDE4FF> Light purple | Solana services, programs, and accounts |
+endlegend
+@enduml

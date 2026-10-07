@@ -1,0 +1,57 @@
+@startuml
+hide footbox
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 220
+
+actor User
+participant "SSH\nOpenSSH + PAM" as SSH
+participant "solana-authd" as AuthD
+participant "Auth Gateway" as Gateway
+participant "Browser\n+ Wallet" as Wallet
+participant "Solana RPC" as RPC
+
+group 1. Start SSH login
+  User -> SSH : ssh ubuntu@<target>
+  SSH -> AuthD : Authenticate ubuntu
+  AuthD -> AuthD : Create challenge + 90-second session
+  AuthD -> Gateway : Publish exact challenge
+  Gateway --> AuthD : Login URL
+  AuthD --> SSH : Login URL
+  SSH --> User : Open URL to authenticate
+end
+
+group 2. Sign the wallet challenge
+  User -> Wallet : Open URL and approve signing
+  Wallet -> Gateway : Fetch challenge
+  Gateway --> Wallet : Exact challenge bytes
+  Wallet -> Wallet : Sign locally with wallet key
+  Wallet -> Gateway : Wallet public key + signature
+  AuthD -> Gateway : Poll for signed response
+  Gateway --> AuthD : Wallet public key + signature
+end
+
+group 3. Verify identity and access
+  AuthD -> AuthD : Check signature, session binding, and expiry
+  opt Signature and pending session are valid
+    AuthD -> RPC : Read finalized server, subscription, and grants
+    RPC --> AuthD : Accounts + freshness metadata, or error
+    AuthD -> AuthD : Check enabled server, active grants, and paid term
+  end
+  alt All checks pass and session is still pending / unexpired
+    AuthD -> AuthD : Atomically consume session
+    AuthD --> SSH : ALLOW / PAM_SUCCESS
+    SSH --> User : Open Linux shell
+  else Invalid proof, expired access, replay, timeout, or unavailable service
+    AuthD -> AuthD : Close pending session
+    AuthD --> SSH : DENY / PAM_AUTH_ERR
+    SSH --> User : Reject login
+  end
+end
+
+note over SSH, AuthD
+  OpenSSH and pam_solana.so share one lifeline for readability.
+  Gateway/setup failures also deny login.
+  No on-chain write or SOL payment occurs during login.
+end note
+@enduml

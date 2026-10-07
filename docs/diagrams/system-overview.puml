@@ -1,0 +1,41 @@
+@startuml
+top to bottom direction
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam nodesep 80
+skinparam ranksep 80
+skinparam linetype polyline
+skinparam ArrowFontSize 12
+
+package "Client Entities" #EAF2FF {
+  component "Browser + Wallet" as Browser #EAF2FF
+  component "SSH Client" as SSH #EAF2FF
+  Browser -[hidden]right-> SSH
+}
+package "Provider Backend" #EAF7ED {
+  component "Portal / Orders / Auth Gateway" as Backend #EAF7ED
+}
+package "Linux Test VM / VPS" #FFF0D9 {
+  component "SSH Access\nOpenSSH + PAM + solana-authd" as Access #FFF0D9
+}
+package "Solana Services" #EDE4FF {
+  component "RPC + billing/access program + accounts" as Solana #EDE4FF
+}
+
+Browser -[dashed]down-> Backend : Portal / wallet signatures
+SSH -[dashed]down-> Access : SSH login
+Access -[dashed]left-> Backend : Publish challenges / poll responses
+Backend -[dashed]down-> Solana : Register server / verify payments
+Access -[dashed]down-> Solana : Read finalized access grants
+Browser -[dashed]down--> Solana : Signed payment / grant transactions
+
+legend bottom
+  |= Color |= Meaning |
+  |<#EAF2FF> Light blue | Client entities |
+  |<#EAF7ED> Light green | Provider backend |
+  |<#FFF0D9> Light orange | VPS / SSH access components |
+  |<#EDE4FF> Light purple | Solana services, programs, and accounts |
+endlegend
+@enduml

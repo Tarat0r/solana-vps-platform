@@ -1,0 +1,71 @@
+@startuml
+hide circle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 45
+
+package "Backend DB" as LocalDB {
+  entity "Order" as Order {
+    * order_id : string <<PK>>
+    --
+    server_id : bytes32 <<unique>>
+    owner_wallet : Pubkey
+    provisioning_status : enum
+    created_at : timestamp
+  }
+
+  entity "PaymentAttempt" as Payment {
+    * payment_id : bytes32 <<PK>>
+    --
+    order_id : string <<FK>>
+    kind : enum (PURCHASE / RENEWAL)
+    transaction_signature : string [optional]
+    status : enum (PENDING / FINALIZED / FAILED)
+    created_at : timestamp
+  }
+}
+
+package "Local Test Configuration (file)" {
+  entity "TestTargetConfig" as Config {
+    server_id : bytes32
+    provider_pubkey : Pubkey
+    program_id : Pubkey
+    cluster : string
+    rpc_url : string <<URL>>
+    ssh_host : string
+    ssh_port : u16
+    unix_user : string
+    auth_gateway : string <<URL>>
+  }
+}
+
+package "solana-authd Memory (temporary)" {
+  entity "AuthSession" as Session {
+    * session_id : string <<random token>>
+    --
+    server_id : bytes32
+    unix_user : string
+    nonce : bytes
+    exact_challenge_bytes : bytes
+    issued_at : timestamp
+    expires_at : timestamp
+    wallet_pubkey : Pubkey [optional]
+    status : enum (PENDING / CONSUMED / DENIED / EXPIRED)
+  }
+}
+
+Order ||--o{ Payment : purchase / renewals
+Config ..> Order : same server_id
+Config ..> Session : binds server and Linux account
+
+note bottom of Payment
+  payment_id identifies the on-chain PaymentReceipt.
+  FINALIZED requires independent receipt verification.
+  An uncertain result stays PENDING until reconciled.
+end note
+
+note bottom of Session
+  Never persisted to the DB.
+  Discard on expiry or daemon restart.
+end note
+@enduml

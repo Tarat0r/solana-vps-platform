@@ -1,0 +1,21 @@
+@startuml
+actor User
+participant "Portal / Wallet" as Portal
+participant "Provider Backend" as Backend
+participant "Solana Program" as Program
+participant "Provider Treasury" as Treasury
+participant "VPS" as VPS
+
+User -> Portal : Select the fixed VPS plan
+Portal -> Backend : Create order with owner wallet
+Backend -> Program : Register reserved server and payment terms
+Backend --> Portal : Server record + displayed SOL price
+User -> Portal : Approve purchase transaction
+Portal -> Program : purchase_access(payment_id), owner signature
+Program -> Treasury : Transfer configured SOL amount
+Program -> Program : Update subscription + owner grant + receipt atomically
+Backend -> Program : Verify finalized receipt and subscription via RPC
+Backend -> VPS : Provision VM, install PAM + daemon, configure server_id
+Backend -> Backend : Verify provisioning and on-chain access
+Backend --> Portal : ACTIVE, IP address, SSH instructions
+@enduml

@@ -1,0 +1,63 @@
+@startuml
+top to bottom direction
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam nodesep 80
+skinparam ranksep 80
+skinparam linetype polyline
+skinparam ArrowFontSize 12
+
+package "Client Entities" #EAF2FF {
+  component "Browser + Wallet" as Browser #EAF2FF
+  component "SSH Client" as SSH #EAF2FF
+  Browser -[hidden]right-> SSH
+}
+package "Provider Backend" #EAF7ED {
+  component "Portal / Orders / Auth Gateway" as Backend #EAF7ED
+}
+package "Linux Test VM / VPS" #FFF0D9 {
+  component "OpenSSH + PAM" as SSHAccess #FFF0D9
+  component "solana-authd" as AuthD #FFF0D9
+}
+component "Solana RPC Service" as RPC #EDE4FF
+package "Solana Runtime" #EDE4FF {
+  interface "Billing / Access Instructions" as Instructions #EDE4FF
+  component "Billing + Access Program" as Program #EDE4FF
+  artifact "Program-Owned Account State" as Accounts #EDE4FF
+  component "System Program" as System #EDE4FF
+  artifact "Provider Treasury Account" as Treasury #EDE4FF
+}
+
+Browser -[dashed]down-> Backend : Portal / wallet signatures
+SSH -[dashed]down-> SSHAccess : SSH login
+SSHAccess -[dashed]down-> AuthD : Authenticate via PAM
+AuthD -[dashed]left-> Backend : Publish challenges / poll responses
+Browser -[dashed]down--> RPC : Submit signed payment / grant transactions
+Backend -[dashed]down-> RPC : Register server / verify receipts
+AuthD -[dashed]down-> RPC : Read finalized subscription / grants
+RPC -[dashed]down-> Instructions : Submit to runtime
+Program -up- Instructions
+RPC -[dashed]down--> Accounts : Read account state
+Program -[dashed]right-> Accounts : Update subscription / grants / receipts
+Program -[dashed]down-> System : Invoke SOL transfer
+System -[dashed]right-> Treasury : Credit provider treasury
+
+note bottom of Accounts
+  ServerRecord / Subscription
+  AccessGrant / PaymentReceipt
+end note
+note bottom of Treasury
+  Native SOL transfer and paid-access updates
+  commit atomically in one transaction.
+end note
+
+legend bottom
+  |= Color |= Meaning |
+  |<#EAF2FF> Light blue | Client entities |
+  |<#EAF7ED> Light green | Provider backend |
+  |<#FFF0D9> Light orange | VPS / SSH access components |
+  |<#EDE4FF> Light purple | Solana services, programs, and accounts |
+endlegend
+@enduml

@@ -1,0 +1,64 @@
+@startuml
+hide circle
+skinparam linetype ortho
+
+entity "ServerRecord (PDA)" as ServerRecord {
+  * address : Pubkey <<derived>>
+  --
+  provider : Pubkey
+  server_id : bytes32
+  owner_wallet : Pubkey
+  treasury : Pubkey
+  price_lamports : u64
+  period_seconds : i64
+  enabled : bool
+}
+
+entity "Subscription (PDA)" as Subscription {
+  * address : Pubkey <<derived>>
+  --
+  server : Pubkey
+  owner_wallet : Pubkey
+  paid_until : i64
+}
+
+entity "AccessGrant (PDA)" as AccessGrant {
+  * address : Pubkey <<derived>>
+  --
+  server : Pubkey
+  wallet : Pubkey
+  grant_type : OWNER / DELEGATED
+  active : bool
+  valid_until : i64
+}
+
+entity "PaymentReceipt (PDA)" as PaymentReceipt {
+  * address : Pubkey <<derived>>
+  --
+  server : Pubkey
+  payer : Pubkey
+  payment_id : bytes32
+  amount_lamports : u64
+  paid_at : i64
+  resulting_paid_until : i64
+}
+
+ServerRecord ||--|| Subscription : has
+ServerRecord ||--o{ AccessGrant : authorizes wallets
+ServerRecord ||--o{ PaymentReceipt : records payments
+
+note bottom of ServerRecord
+  All four account types are owned by the Solana program.
+  Account addresses are derived from the PDA seeds above.
+  Discriminators and bumps are omitted from this diagram.
+  Provider, owner, payer, wallet, and treasury fields
+  reference public keys, not additional program-owned entities.
+end note
+
+note bottom of Subscription
+  Initialized unpaid during server registration.
+  Payment atomically updates the subscription,
+  owner grant, and a new payment receipt.
+  Delegated access also requires a valid owner subscription.
+end note
+@enduml
