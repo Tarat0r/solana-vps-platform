@@ -1,14 +1,13 @@
-# PAM module
+# pam_solana.so
 
-**Lead:** Vassil
+Linux-PAM cdylib built as `libpam_solana.so`, installed as `pam_solana.so`. Exports
+`pam_sm_authenticate` and `pam_sm_setcred`. It obtains the PAM username, connects
+to the root-owned socket, displays a keyboard-interactive signing prompt, and
+accepts only explicit daemon approval before expiry. Errors and panics fail closed.
+While waiting, periodic conversation checks let OpenSSH notice disconnected
+clients; they do not create another challenge or require another signature.
 
-Implement `pam_solana.so` for OpenSSH keyboard-interactive authentication.
-
-- Ask `solana-authd` for a login session over its protected Unix socket.
-- Display the HTTPS wallet-signing URL through the PAM conversation.
-- Wait for the daemon's result and return the corresponding PAM result.
-- Deny on cancellation, timeout, daemon failure, or invalid responses.
-
-Start with the PAM/daemon IPC contract in [shared/](../../shared/). Keep signature verification and Solana RPC logic in the daemon. Add build/install commands and coordinate VM configuration with [infra/](../../infra/).
-
-See [Architecture.md](../../Architecture.md).
+Configure `auth requisite pam_solana.so`, optionally with a root-controlled
+`socket=/absolute/path`. Default: `/run/solana-authd.sock`. The module performs no
+HTTP, RPC or signature verification and provides no alternative authentication.
+See [../README.md](../README.md) for installation and real OpenSSH tests.

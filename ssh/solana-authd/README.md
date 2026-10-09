@@ -1,15 +1,16 @@
 # solana-authd
 
-**Lead:** Vassil
+Run `solana-authd /etc/solana-auth/server.toml` as root with a root-owned mode-0600
+configuration. The daemon accepts root Unix-socket peers and at most 64 concurrent
+connections. Each session belongs to one connection, lasts 90 seconds, and can
+return success once. Restart invalidates all pending local sessions.
 
-Implement the VPS authentication daemon.
+It publishes exact challenge bytes, polls wallet responses, verifies strict
+Ed25519 signatures, and checks a combined finalized account snapshot: PDA
+addresses/bumps, discriminators, program ownership, wallet/server relationships,
+grants, subscription expiry and block-time freshness. Malformed data, disconnects
+and network failures deny authentication.
 
-- Load the root-owned server configuration and serve a protected Unix socket with peer checks.
-- Create server/account-bound challenges with a 90-second expiry and single-use sessions.
-- Exchange challenges and signed responses with the backend gateway over authenticated HTTPS.
-- Verify Ed25519 signatures and finalized Solana accounts, relationships, grants, and freshness.
-- Atomically consume successful sessions and return allow/deny to PAM; fail closed on errors.
-
-Start with challenge bytes, IPC, gateway contracts, and program fixtures in [shared/](../../shared/). Log outcomes without exposing session tokens or full challenges. Add build, service, and test commands with the implementation.
-
-See [Architecture.md](../../Architecture.md).
+See [the contract](../CONTRACTS.md), [setup/tests](../README.md) and
+[sample configuration](../deploy/server.toml.example). Audit records exclude
+session URLs, tokens, nonces, full challenges and signatures.
