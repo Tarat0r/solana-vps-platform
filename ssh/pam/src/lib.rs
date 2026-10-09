@@ -194,6 +194,27 @@ unsafe fn authenticate(
         return Err(());
     }
     send(reader.get_mut(), &Request::Wait { version: VERSION })?;
+    // OpenSSH may wait synchronously for PAM after a keyboard-interactive reply.
+    // Periodic conversation checks let it observe a disconnected SSH client
+    // instead of keeping the PAM worker/socket alive until the full deadline.
+    loop {
+        let mut descriptor = libc::pollfd {
+            fd: reader.get_ref().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = libc::poll(&mut descriptor, 1, 1000);
+        if ready < 0 || unix_time() >= expires_at {
+            return Err(());
+        }
+        if ready > 0 {
+            break;
+        }
+        if prompt(pamh, &url).is_err() {
+            let _ = send(reader.get_mut(), &Request::Cancel { version: VERSION });
+            return Err(());
+        }
+    }
     match read_response(&mut reader)? {
         Response::Result {
             version: VERSION,

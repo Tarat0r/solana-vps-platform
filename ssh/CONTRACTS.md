@@ -32,6 +32,11 @@ Every message carries `version: 1`; sessions belong to their original connection
 or service failure denies the attempt. A connection can produce at most one
 decision and cannot resume or consume another connection's session.
 
+While waiting for the decision, PAM checks socket readability once per second.
+If no reply is ready, it repeats the signing conversation so OpenSSH can observe
+client disconnection instead of retaining a blocked PAM worker. It sends `wait`
+only once; repeated prompts do not create sessions or require new signatures.
+
 ## Gateway HTTP API
 
 - `POST /v1/sessions`: bearer-authenticated daemon publication of
