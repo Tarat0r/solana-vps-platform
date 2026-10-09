@@ -1,0 +1,14 @@
+# Install root:root, mode 0600. Replace placeholders with real deployment values.
+cluster = "devnet"
+rpc_url = "https://api.devnet.solana.com"
+program_id = "<deployed-program-public-key>"
+provider_pubkey = "<provider-public-key>"
+server_id = "<64-lowercase-hex-characters>"
+unix_user = "ubuntu"
+auth_gateway = "https://auth.provider.example"
+auth_origin = "https://auth.provider.example"
+gateway_token = "<random-daemon-token-at-least-32-characters>"
+commitment = "finalized"
+challenge_ttl_seconds = 90
+local_test = false
+socket_path = "/run/solana-authd.sock"

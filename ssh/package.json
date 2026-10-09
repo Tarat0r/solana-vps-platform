@@ -4,8 +4,13 @@
   "type": "module",
   "engines": { "node": ">=22.18" },
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/gateway.test.ts",
     "vm": "node --experimental-strip-types tests/vm.ts",
     "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/ssh.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "~5.9.3"
   }
 }

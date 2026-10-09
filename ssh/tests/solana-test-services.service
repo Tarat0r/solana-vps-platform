@@ -1,0 +1,18 @@
+[Unit]
+Description=TEST ONLY synthetic Solana RPC and challenge gateway
+After=network.target
+
+[Service]
+ExecStart=/usr/local/sbin/solana-test-services serve
+EnvironmentFile=/etc/solana-auth/test.env
+Environment=SOLANA_TEST_BIND=0.0.0.0
+Restart=on-failure
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
