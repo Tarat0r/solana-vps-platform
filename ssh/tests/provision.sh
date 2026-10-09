@@ -41,6 +41,9 @@ usermod -p "$(openssl passwd -6 "$(head -c 32 /dev/urandom | base64)")" ubuntu
 install -m 644 /mnt/source/deploy/solana-authd.service /etc/systemd/system/
 install -m 644 /mnt/source/tests/solana-test-services.service /etc/systemd/system/
 install -m 644 /mnt/source/deploy/sshd-wallet.conf /etc/ssh/sshd_config.d/00-solana-wallet.conf
+# This isolated suite intentionally generates many failed logins from one host.
+# Keep production penalties intact; disable them only in the disposable test VM.
+printf 'PerSourcePenalties no\n' > /etc/ssh/sshd_config.d/01-solana-test-penalties.conf
 if ! test -f /etc/pam.d/sshd.before-solana; then cp -a /etc/pam.d/sshd /etc/pam.d/sshd.before-solana; fi
 # Retain Debian's account/session handling while replacing its authentication stack.
 awk '!/^@include common-auth/ && !/^auth[[:space:]]/' /etc/pam.d/sshd.before-solana > /etc/pam.d/sshd

@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/gateway.test.ts",
     "vm": "node --experimental-strip-types tests/vm.ts",
-    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/ssh.test.ts"
+    "test:vm": "node --experimental-strip-types tests/run-ssh.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
