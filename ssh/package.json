@@ -1,0 +1,11 @@
+{
+  "name": "solana-ssh-tests",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/gateway.test.ts",
+    "vm": "node --experimental-strip-types tests/vm.ts",
+    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/ssh.test.ts"
+  }
+}
