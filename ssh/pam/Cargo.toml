@@ -1,0 +1,15 @@
+[package]
+name = "pam-solana"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "pam_solana"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+auth-core.workspace = true
+libc.workspace = true
+serde_json.workspace = true
