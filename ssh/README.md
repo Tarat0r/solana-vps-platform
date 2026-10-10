@@ -17,9 +17,9 @@ has no fixture authorization bypass.
 - Node.js 22.18+ and npm. Tests and VM management use TypeScript; no Python scripts
   or Docker are required.
 - Supplied image at `../tests/debian-13-nocloud-amd64.qcow2`.
-- Available host ports `127.0.0.2:2222`, `:8080`, `:8899`; up to 16 GiB guest disk
-  space. QEMU uses KVM when available and otherwise TCG. If gateway port 8080 is
-  occupied, choose another host port with `SOLANA_SSH_GATEWAY_PORT` as shown below.
+- Available host ports `127.0.0.2:2222` and `:8899`; up to 16 GiB guest disk
+  space. QEMU uses KVM when available and otherwise TCG. The gateway prefers
+  port 8080 and automatically selects a free port if that port is occupied.
 
 ## Run the complete test pipeline
 
@@ -45,15 +45,15 @@ The pipeline executes these stages in order and stops at the first failure:
 | 4 | Build host binaries, including the test wallet signer and PAM library. |
 | 5 | Run all Rust unit tests and documentation tests. |
 | 6 | Type-check the TypeScript runners, fixtures and SSH tests. |
-| 7 | Stop this project's managed VM, if running, to release the fixture ports. |
-| 8 | Start the host fixture service, run gateway contract tests, and stop it. |
+| 7 | Stop this project's managed VM, check SSH/RPC ports, and select/save a free gateway port. |
+| 8 | Run network regression tests and gateway contract tests with a temporary host fixture service. |
 | 9 | Boot/provision Debian; build, test, format-check and lint Rust inside the guest. |
 | 10 | Run the full SSH end-to-end suite against `127.0.0.2:2222`. |
 
-The gateway tests and VM both use `127.0.0.2:8080` and `:8899`, so stage 7 is
-intentional: it also closes existing SSH/serial sessions to this test VM. The
-runner does not stop unrelated processes or delete/reset the overlay. It reuses
-the guest filesystem and Cargo cache, and preserves the supplied base image.
+The gateway tests and VM share the selected gateway port and `127.0.0.2:8899`,
+so stage 7 also closes existing SSH/serial sessions to this test VM. The runner
+does not stop unrelated processes or delete/reset the overlay. It reuses the
+guest filesystem and Cargo cache, and preserves the supplied base image.
 
 Successful runs leave the VM available for manual use. To stop it after success:
 
@@ -65,20 +65,28 @@ This adds a final VM shutdown stage. On failure, later stages do not run and the
 VM/overlay remain in the state reached, so you can investigate. Exit status is
 zero only if every requested stage passes. `--help` describes the options.
 
-When another service owns port 8080, select a free gateway port without stopping
-that service:
+No port override is needed for the usual command. Before gateway tests, the
+pipeline tries the saved gateway port, or 8080 on the first run. If another service
+owns that port, it asks the OS for a free port and prints its URL. The choice is
+saved in `.vm/network.json`; later test and VM commands reuse it automatically.
+The pipeline report also records the selected URL. Unrelated listeners stay running.
+
+To require a specific gateway port:
 
 ```sh
 export SOLANA_SSH_GATEWAY_PORT=18080
 npm run test:all
 ```
 
-Keep that variable set for later `npm test`, `npm run vm -- prepare` and
-`npm run test:vm` commands. It changes the host fixture listener, QEMU forwarding,
-public signing origin and signing helper together. The guest daemon still reaches
-its gateway on guest port 8080; host SSH/RPC remain 2222/8899. Changing the port of
-an already-running VM requires stopping and preparing it again; the full pipeline
-does this automatically. The default remains 8080 when the variable is unset.
+An explicit `SOLANA_SSH_GATEWAY_PORT` takes precedence over the saved port. If it
+is occupied, the pipeline fails at stage 7 with the address and a recovery hint;
+it does not silently choose a different port. Unset the variable to enable automatic
+selection again. The selected port applies to the host fixture listener, QEMU
+forwarding, public signing origin and signing helper together. The guest daemon
+still reaches its gateway on guest port 8080; host SSH/RPC remain 2222/8899.
+Changing the port of an already-running VM requires stopping and preparing it
+again; the full pipeline does this automatically. Standalone VM startup also
+selects and saves its gateway port.
 
 The SSH suite takes roughly two minutes with KVM, including a real 90-second
 expiry test. Cold runs take longer to download packages and compile both host and
@@ -101,6 +109,7 @@ cases, so the count is smaller than the number of authentication attempts.
 | Rust `auth-core` | 4 | Canonical signed bytes, strict signature/server/account binding, expiry and clock rollback, field-injection rejection, owner/delegate rules, account encoding and freshness boundaries. |
 | Rust `pam-solana` | 2 | Invalid PAM handles fail closed; incomplete or oversized daemon responses are rejected. |
 | Rust `solana-authd` | 4 | Secure configuration defaults, RPC metadata rejection, bounded IPC parsing and single-use/monotonic session expiry. |
+| TypeScript network regression | 3 | Automatic fallback when a wildcard listener occupies the preferred port, explicit override behavior, and saved-port reuse and validation. |
 | TypeScript gateway contracts | 3 | Publication/retrieval, protected daemon operations, duplicate IDs/proofs, expiry, deletion and authenticated fixture controls. |
 | TypeScript Debian/OpenSSH | 28 | Actual SSH authentication through the installed PAM module and daemon, including authorization, lifecycle failures and recovery. |
 
@@ -116,6 +125,10 @@ binary on the host. It verifies exact challenge retrieval, 401 responses for
 unauthenticated daemon operations, pending-response polling, one immutable proof
 per session, duplicate rejection, expiry and cleanup. The test service is stopped
 after the suite. These tests need a built host binary but do not need the VM.
+
+`npm test` also runs [tests/network.test.ts](tests/network.test.ts). Gateway startup
+checks both listener addresses first, so a conflict names the occupied address
+and provides a recovery command instead of only reporting fixture-process failures.
 
 ### Real SSH tests in Debian
 
@@ -217,8 +230,9 @@ the original image. `stop` preserves the overlay. Private control sockets live i
 `/tmp` to accommodate long Unicode workspace paths.
 
 Host SSH `127.0.0.2:2222` forwards to guest port 22. Gateway/RPC forwards use host
-`127.0.0.2:8080` and `:8899`; the guest daemon uses `127.0.0.1:8080` and `:8899`.
-`SOLANA_SSH_GATEWAY_PORT` overrides the host gateway port and public signing URL.
+`127.0.0.2:<selected-gateway-port>` and `:8899`; the guest daemon uses
+`127.0.0.1:8080` and `:8899`. Read `.vm/network.json` or the pipeline output for
+the selected port. `SOLANA_SSH_GATEWAY_PORT` overrides it and the public signing URL.
 The signing origin is bound into the challenge separately from the transport URL.
 
 Test signing URLs return exact challenge JSON. For a manual terminal login, run
@@ -233,6 +247,7 @@ Generated artifacts are ignored under `.vm/`:
 | --- | --- |
 | `pipeline-report.json` | Latest started pipeline: timestamps, overall status, attempted stages, exact commands, durations and failure reason. Unreached stages are absent. |
 | `pipeline.log` | Combined stdout/stderr and stage headings for the latest pipeline. |
+| `network.json` | Selected host gateway port, reused by subsequent test and VM commands. |
 | `report.json` | Latest SSH suite's scenario names, pass/fail results and durations. A filtered run contains only matching scenarios. |
 | `serial.log` | Guest provisioning/build output and recovery-console commands. |
 | `qemu.log` | QEMU startup/device errors. |
@@ -251,7 +266,7 @@ Common failure paths:
 | Symptom | Next step |
 | --- | --- |
 | Missing image or executable | Check the prerequisites and image path; preflight exits before test stages. |
-| Port already in use | Stop this project's VM with `npm run vm -- stop --if-running`; identify other listeners. For an occupied gateway port, set `SOLANA_SSH_GATEWAY_PORT` to a free port. |
+| Port already in use | Stop this project's VM with `npm run vm -- stop --if-running`. For gateway conflicts, unset `SOLANA_SSH_GATEWAY_PORT` and rerun `npm run test:all` for automatic selection, or choose a free explicit port. SSH/RPC ports 2222/8899 stay fixed; resolve conflicting listeners before retrying. |
 | npm/Cargo download or guest DNS failure | Check network permissions and `pipeline.log`/`serial.log`; `SOLANA_VM_DNS` overrides the guest DNS fallback. |
 | Guest build/provisioning fails | Read `serial.log`, fix the reported step, then rerun `npm run vm -- prepare` or the pipeline; the overlay is retained. |
 | No signing prompt or unexpected denial | Check guest `sshd -t`, service state and journals over the recovery console. |
