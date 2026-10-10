@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/gateway.test.ts",
+    "test:all": "node --experimental-strip-types tests/pipeline.ts",
     "vm": "node --experimental-strip-types tests/vm.ts",
     "test:vm": "node --experimental-strip-types tests/run-ssh.ts"
   },
