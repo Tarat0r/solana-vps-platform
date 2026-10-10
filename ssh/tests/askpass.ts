@@ -4,10 +4,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { root } from './vm.ts';
+import { gatewayOrigin } from './network.ts';
 
 const prompt = process.argv[2] ?? '';
-const url = prompt.match(/http:\/\/127\.0\.0\.2:8080\/v1\/sessions\/[a-f0-9]{64}/)?.[0];
+const url = prompt.match(/http:\/\/127\.0\.0\.2:[0-9]+\/v1\/sessions\/[a-f0-9]{64}/)?.[0];
 if (!url) process.exit(1);
+assert.equal(new URL(url).origin, gatewayOrigin);
 const directory = process.env.SSH_TEST_CASE!;
 fs.writeFileSync(path.join(directory, 'url'), url, { mode: 0o600 });
 const mode = process.env.SSH_TEST_MODE ?? 'owner';

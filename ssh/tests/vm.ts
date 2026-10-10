@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { connect, createServer, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { gatewayPort } from './network.ts';
 
 export const root = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
 export const stateDir = path.join(root, '.vm');
@@ -107,7 +108,7 @@ async function up() {
     try { const socket = connect(qmpPath); await new Promise<void>((r, j) => { socket.once('connect', r); socket.once('error', j); }); socket.destroy(); globalThis.console.log('VM already running'); return; }
     catch { /* a previous VM may have exited */ }
   }
-  for (const port of [2222, 8080, 8899]) await assertPortFree(port);
+  for (const port of [2222, gatewayPort, 8899]) await assertPortFree(port);
   for (const file of [serialPath, qmpPath]) { if (fs.existsSync(file)) fs.unlinkSync(file); }
   if (!fs.existsSync(overlay)) {
     execFileSync('qemu-img', ['create', '-f', 'qcow2', '-F', 'qcow2', '-b', image, overlay], { stdio: 'inherit' });
@@ -121,7 +122,7 @@ async function up() {
     '-display', 'none', '-monitor', 'none',
     '-chardev', `socket,id=serial0,path=${serialPath},server=on,wait=off`, '-serial', 'chardev:serial0',
     '-qmp', `unix:${qmpPath},server=on,wait=off`,
-    '-netdev', 'user,id=net0,hostfwd=tcp:127.0.0.2:2222-:22,hostfwd=tcp:127.0.0.2:8080-:8080,hostfwd=tcp:127.0.0.2:8899-:8899',
+    '-netdev', `user,id=net0,hostfwd=tcp:127.0.0.2:2222-:22,hostfwd=tcp:127.0.0.2:${gatewayPort}-:8080,hostfwd=tcp:127.0.0.2:8899-:8899`,
     '-device', 'virtio-net-pci,netdev=net0',
     '-fsdev', `local,id=source,path=${root},security_model=none,readonly=on`, '-device', 'virtio-9p-pci,fsdev=source,mount_tag=source',
     '-no-reboot',
@@ -147,7 +148,7 @@ async function prepare() {
     await console.command('mkdir -p /mnt/source; mountpoint -q /mnt/source || mount -t 9p -o trans=virtio,version=9p2000.L,ro source /mnt/source');
     console.logging = true;
     const token = secrets().token;
-    await console.command(`install -d -m 700 /etc/solana-auth; printf '%s\\n' ${quote('SOLANA_TEST_TOKEN=' + token)} > /etc/solana-auth/test.env; chmod 600 /etc/solana-auth/test.env`);
+    await console.command(`install -d -m 700 /etc/solana-auth; printf '%s\\n' ${quote('SOLANA_TEST_TOKEN=' + token)} ${quote('SOLANA_SSH_GATEWAY_PORT=' + gatewayPort)} > /etc/solana-auth/test.env; chmod 600 /etc/solana-auth/test.env`);
     globalThis.console.log('Provisioning and building inside Debian; progress is in .vm/serial.log');
     const dns = process.env.SOLANA_VM_DNS;
     await console.command(`${dns ? 'SOLANA_VM_DNS=' + quote(dns) + ' ' : ''}bash /mnt/source/tests/provision.sh`, 3_600_000);
@@ -174,7 +175,14 @@ async function main() {
   switch (process.argv[2]) {
     case 'up': return up();
     case 'prepare': return prepare();
-    case 'stop': return stop();
+    case 'stop':
+      try { await stop(); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!process.argv.includes('--if-running') || (code !== 'ENOENT' && code !== 'ECONNREFUSED')) throw error;
+        console.log('Managed VM is already stopped');
+      }
+      return;
     case 'reset':
       if (fs.existsSync(qmpPath)) { try { await stop(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED' && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
       for (const file of ['debian-overlay.qcow2', 'ready', 'known_hosts', 'qemu.pid']) fs.rmSync(path.join(stateDir, file), { force: true });

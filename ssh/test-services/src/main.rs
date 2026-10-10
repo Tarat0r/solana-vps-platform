@@ -343,7 +343,8 @@ async fn serve() -> Result<()> {
         .route("/", post(rpc))
         .layer(DefaultBodyLimit::max(16384))
         .with_state(app);
-    let gateway_listener = tokio::net::TcpListener::bind(format!("{bind}:8080")).await?;
+    let gateway_port = configured_port("SOLANA_TEST_GATEWAY_PORT")?;
+    let gateway_listener = tokio::net::TcpListener::bind(format!("{bind}:{gateway_port}")).await?;
     let rpc_listener = tokio::net::TcpListener::bind(format!("{bind}:8899")).await?;
     tokio::try_join!(
         axum::serve(gateway_listener, gateway),
@@ -392,8 +393,18 @@ async fn proof(url: &str, who: &str) -> Result<SignedResponse> {
     })
 }
 
-fn config() {
-    println!("cluster = \"localnet\"\nrpc_url = \"http://127.0.0.1:8899\"\nprogram_id = \"{}\"\nprovider_pubkey = \"{}\"\nserver_id = \"{}\"\nunix_user = \"ubuntu\"\nauth_gateway = \"http://127.0.0.1:8080\"\nauth_origin = \"http://127.0.0.2:8080\"\ngateway_token = \"{}\"\ncommitment = \"finalized\"\nchallenge_ttl_seconds = 90\nlocal_test = true", key(PROGRAM), key(PROVIDER), hex(&SERVER), token());
+fn configured_port(variable: &str) -> Result<u16> {
+    let port = std::env::var(variable)
+        .unwrap_or_else(|_| "8080".into())
+        .parse()?;
+    ensure!(port != 0, "test gateway port must be nonzero");
+    Ok(port)
+}
+
+fn config() -> Result<()> {
+    let public_port = configured_port("SOLANA_SSH_GATEWAY_PORT")?;
+    println!("cluster = \"localnet\"\nrpc_url = \"http://127.0.0.1:8899\"\nprogram_id = \"{}\"\nprovider_pubkey = \"{}\"\nserver_id = \"{}\"\nunix_user = \"ubuntu\"\nauth_gateway = \"http://127.0.0.1:8080\"\nauth_origin = \"http://127.0.0.2:{public_port}\"\ngateway_token = \"{}\"\ncommitment = \"finalized\"\nchallenge_ttl_seconds = 90\nlocal_test = true", key(PROGRAM), key(PROVIDER), hex(&SERVER), token());
+    Ok(())
 }
 
 #[tokio::main]
@@ -401,10 +412,7 @@ async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("serve") => serve().await,
-        Some("config") => {
-            config();
-            Ok(())
-        }
+        Some("config") => config(),
         Some("proof") | Some("sign") => {
             ensure!(args.len()>=2,"usage: test-services proof|sign URL [owner|delegate|outsider|bad-signature|wrong-user|wrong-server]");
             let proof = proof(&args[1], args.get(2).map(String::as_str).unwrap_or("owner")).await?;

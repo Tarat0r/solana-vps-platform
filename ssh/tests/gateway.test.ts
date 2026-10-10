@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { gatewayOrigin, gatewayPort } from './network.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const token = 'gateway-contract-test-token-00000001';
-const base = 'http://127.0.0.2:8080';
+const base = gatewayOrigin;
 let service: ChildProcess;
 
 async function request(path: string, method = 'GET', body?: unknown, authenticated = false) {
@@ -22,11 +23,11 @@ async function request(path: string, method = 'GET', body?: unknown, authenticat
 
 before(async () => {
   service = spawn(root + 'target/debug/test-services', ['serve'], {
-    env: { ...process.env, SOLANA_TEST_BIND: '127.0.0.2', SOLANA_TEST_TOKEN: token },
+    env: { ...process.env, SOLANA_TEST_BIND: '127.0.0.2', SOLANA_TEST_TOKEN: token, SOLANA_TEST_GATEWAY_PORT: String(gatewayPort) },
     stdio: ['ignore', 'ignore', 'inherit'],
   });
   for (let attempt = 0; attempt < 100; attempt++) {
-    assert.equal(service.exitCode, null, 'fixture process exited; ports 8080/8899 must be free');
+    assert.equal(service.exitCode, null, `fixture process exited; ports ${gatewayPort}/8899 must be free`);
     try {
       assert.equal((await request('/_test/status', 'GET', undefined, true)).status, 200);
       return;

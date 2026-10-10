@@ -5,8 +5,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Console, root, secrets, stateDir } from './vm.ts';
+import { gatewayOrigin } from './network.ts';
 
-const gateway = 'http://127.0.0.2:8080';
+const gateway = gatewayOrigin;
 const cases: string[] = [];
 const children = new Set<ChildProcess>();
 const results: { name: string; pass: boolean; durationMs: number }[] = [];
