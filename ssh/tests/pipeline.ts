@@ -2,9 +2,9 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { root, stateDir } from './vm.ts';
-import { gatewayOrigin } from './network.ts';
+import { gatewayOrigin, prepareNetwork } from './network.ts';
 
-type Stage = { name: string; command: string; args: string[] };
+type Stage = { name: string; command: string; args: string[]; prepareNetwork?: boolean };
 type Outcome = Stage & { status: 'passed' | 'failed'; durationMs: number; error?: string };
 
 const args = process.argv.slice(2);
@@ -14,6 +14,7 @@ const usage = `Usage: npm run test:all -- [--stop-vm]
 Run dependency installation, host checks, gateway tests, Debian provisioning,
 and the complete SSH suite. Reuses the VM overlay and leaves the VM running.
 An existing managed VM is stopped before gateway tests to release its ports.
+Busy default gateway ports are replaced automatically; explicit overrides are honored.
 --stop-vm also stops the VM after a successful suite; failures retain diagnostics.
 Reports: .vm/pipeline-report.json, .vm/pipeline.log, .vm/report.json`;
 
@@ -49,8 +50,8 @@ async function main() {
     { name: 'Build host binaries and PAM module', command: 'cargo', args: ['build', '--locked', '--workspace'] },
     { name: 'Run Rust unit and documentation tests', command: 'cargo', args: ['test', '--locked', '--workspace'] },
     { name: 'Type-check TypeScript', command: 'npm', args: ['run', 'typecheck'] },
-    { name: 'Release ports held by the managed VM', command: 'npm', args: ['run', 'vm', '--', 'stop', '--if-running'] },
-    { name: 'Run gateway contract tests', command: 'npm', args: ['test'] },
+    { name: 'Release VM ports and select the test network', command: 'npm', args: ['run', 'vm', '--', 'stop', '--if-running'], prepareNetwork: true },
+    { name: 'Run network regression and gateway contract tests', command: 'npm', args: ['test'] },
     { name: 'Prepare Debian and run guest Rust checks', command: 'npm', args: ['run', 'vm', '--', 'prepare'] },
     { name: 'Run the full OpenSSH end-to-end suite', command: 'npm', args: ['run', 'test:vm'] },
   ];
@@ -115,6 +116,13 @@ async function main() {
             else reject(new Error(`${stage.name}: ${interrupted ?? signal ?? `exit ${code}`}`));
           });
         });
+        if (stage.prepareNetwork) {
+          await prepareNetwork();
+          report.gatewayOrigin = gatewayOrigin;
+          const message = `Gateway: ${gatewayOrigin} (saved in .vm/network.json)\n`;
+          process.stdout.write(message);
+          fs.writeSync(log, message);
+        }
         report.stages.push({ ...stage, status: 'passed', durationMs: Date.now() - started });
       } catch (error) {
         report.stages.push({ ...stage, status: 'failed', durationMs: Date.now() - started, error: (error as Error).message });

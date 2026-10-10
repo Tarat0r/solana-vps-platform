@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { gatewayOrigin, gatewayPort } from './network.ts';
+import { assertPortFree, gatewayOrigin, gatewayPort } from './network.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const token = 'gateway-contract-test-token-00000001';
@@ -22,6 +22,7 @@ async function request(path: string, method = 'GET', body?: unknown, authenticat
 }
 
 before(async () => {
+  for (const port of [gatewayPort, 8899]) await assertPortFree(port);
   service = spawn(root + 'target/debug/test-services', ['serve'], {
     env: { ...process.env, SOLANA_TEST_BIND: '127.0.0.2', SOLANA_TEST_TOKEN: token, SOLANA_TEST_GATEWAY_PORT: String(gatewayPort) },
     stdio: ['ignore', 'ignore', 'inherit'],

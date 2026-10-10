@@ -2,10 +2,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { connect, createServer, type Socket } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { gatewayPort } from './network.ts';
+import { gatewayOrigin, gatewayPort, prepareNetwork } from './network.ts';
 
 export const root = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
 export const stateDir = path.join(root, '.vm');
@@ -94,12 +94,6 @@ export class Console {
   close() { this.socket.destroy(); }
 }
 
-async function assertPortFree(port: number) {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.2', resolve); });
-  await new Promise<void>(resolve => server.close(() => resolve()));
-}
-
 async function up() {
   if (!fs.existsSync(image)) throw new Error(`Missing supplied image: ${image}`);
   secrets();
@@ -108,7 +102,8 @@ async function up() {
     try { const socket = connect(qmpPath); await new Promise<void>((r, j) => { socket.once('connect', r); socket.once('error', j); }); socket.destroy(); globalThis.console.log('VM already running'); return; }
     catch { /* a previous VM may have exited */ }
   }
-  for (const port of [2222, gatewayPort, 8899]) await assertPortFree(port);
+  await prepareNetwork();
+  globalThis.console.log(`Gateway: ${gatewayOrigin} (saved in .vm/network.json)`);
   for (const file of [serialPath, qmpPath]) { if (fs.existsSync(file)) fs.unlinkSync(file); }
   if (!fs.existsSync(overlay)) {
     execFileSync('qemu-img', ['create', '-f', 'qcow2', '-F', 'qcow2', '-b', image, overlay], { stdio: 'inherit' });
