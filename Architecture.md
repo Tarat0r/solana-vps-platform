@@ -24,6 +24,7 @@
 - [6. Solana-Only Billing and Provisioning Flow](#6-solana-only-billing-and-provisioning-flow)
 - [7. Wallet Authentication Through SSH](#7-wallet-authentication-through-ssh)
   - [7.1. Login-Time Sequence Diagram](#71-login-time-sequence-diagram)
+  - [7.2. Detailed SSH Component Diagram](#72-detailed-ssh-component-diagram)
 - [8. Authorization Decision and Expiration](#8-authorization-decision-and-expiration)
 - [9. VPS Enforcement and Recovery](#9-vps-enforcement-and-recovery)
 - [10. Local State and Audit Records](#10-local-state-and-audit-records)
@@ -272,6 +273,16 @@ Signing a login challenge requires no Solana transaction or transaction fee. Pay
 ![Wallet-authenticated SSH login sequence](docs/diagrams/ssh-login.svg)
 
 [PlantUML source](docs/diagrams/ssh-login.puml)
+
+### 7.2. Detailed SSH Component Diagram
+
+The SSH implementation's process boundaries, shared verification library,
+configuration, gateway and RPC interfaces, and local fixture services are
+shown below. See [the SSH README](ssh/README.md) for setup and operation.
+
+![Detailed wallet-authenticated SSH components](docs/diagrams/ssh-components.svg)
+
+[PlantUML source](docs/diagrams/ssh-components.puml)
 
 ## 8. Authorization Decision and Expiration
 

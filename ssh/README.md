@@ -10,6 +10,29 @@ is deployed, no SOL is transferred, and there is no browser wallet page. Account
 encoding is provisional pending integration with the program owner. The daemon
 has no fixture authorization bypass.
 
+## Authentication flow
+
+The diagram shows how OpenSSH/PAM, `solana-authd`, the auth gateway, the wallet,
+and Solana RPC authenticate a login and verify access.
+
+![Wallet-authenticated SSH sequence](../docs/diagrams/ssh-login.svg)
+
+[PlantUML source](../docs/diagrams/ssh-login.puml) ·
+[Rendering instructions](../docs/diagrams/README.md)
+
+## Detailed component diagram
+
+The diagram separates the client, VPS processes, shared `auth-core` library,
+and external services. It shows PAM IPC, daemon session handling, gateway and
+RPC interfaces, signature and account verification, configuration, and audit
+output. The local VM uses `test-services` for the gateway and RPC, and a CLI
+signer in place of a browser wallet.
+
+![Detailed wallet-authenticated SSH components](../docs/diagrams/ssh-components.svg)
+
+[PlantUML source](../docs/diagrams/ssh-components.puml) ·
+[Rendering instructions](../docs/diagrams/README.md)
+
 ## Prerequisites and checks
 
 - Linux, QEMU (`qemu-system-x86_64`, `qemu-img`), OpenSSH client and `ssh-keygen`.

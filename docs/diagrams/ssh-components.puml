@@ -1,0 +1,92 @@
+@startuml
+!pragma layout smetana
+title Wallet-authenticated SSH: detailed components
+top to bottom direction
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam ArrowFontSize 12
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam packageStyle rectangle
+
+package "Client workstation" as Workstation #EAF2FF {
+  component "OpenSSH client\nKeyboard-interactive login" as Client #EAF2FF
+  component "Browser + wallet\nExternal integration\nSign exact challenge bytes locally" as Wallet #EAF2FF
+}
+
+node "Linux VPS\nDebian 13 QEMU guest in the local demo" as VPS #FFF0D9 {
+  artifact "SSH policy\ndeploy/sshd-wallet.conf\n/etc/pam.d/sshd" as SSHPolicy #FFF8EA
+
+  package "OpenSSH process" #FFF8EA {
+    component "sshd + Linux-PAM\nAccount/session checks\nSingle login account: ubuntu" as SSHD #FFF0D9
+    component "pam_solana.so\npam/src/lib.rs\nDisplay login URL via PAM conversation\nWait/cancel; map result to PAM status" as PAM #FFF0D9
+  }
+
+  node "solana-authd process\nRoot; restricted systemd service" as Daemon #EAF7ED {
+    component "IPC + session lifecycle\nlib.rs: serve / handle / run_session\nRoot peer credentials; 64 connections\n90-second session per connection\nConsume once; cancel on disconnect" as Sessions #EAF7ED
+    component "Gateway client + authorization flow\nlib.rs: handle / run_session / poll_and_authorize\nPublish challenge; poll every 250 ms\nVerify proof; read and authorize access\nBest-effort session cleanup" as GatewayClient #EAF7ED
+    component "Solana RPC adapter\nrpc.rs: read_access\nBounded JSON + program-owner checks\nFinalized snapshot; reject slot rollback\nBlock-time freshness within 30 seconds" as RPCAdapter #EAF7ED
+    component "Configuration loader\nconfig.rs: Config::load / validate\nIdentity, endpoints, token, socket\nValidate root ownership and mode" as Config #EAF7ED
+    component "Audit emitter\nlib.rs: audit\nJSON login decision\nNo challenge, signature, or token" as Audit #EAF7ED
+  }
+
+  package "auth-core: shared Rust library (linked into callers)" #EDE4FF {
+    component "protocol.rs\nVersion 1 newline-delimited JSON\nStart / Wait / Cancel\nChallenge / Result; 16 KiB frame limit\nPublishedChallenge / SignedResponse" as Protocol #EDE4FF
+    component "challenge.rs\nCanonical challenge bytes + random nonce\nBind server, user, session, origin, expiry\nStrict Ed25519 signature verification" as Challenge #EDE4FF
+    component "accounts.rs\nBorsh codecs + Anchor discriminators\nPDA seeds, bumps, account relationships\nEnabled server; paid subscription\nActive owner and wallet grants" as Access #EDE4FF
+  }
+
+  artifact "/etc/solana-auth/server.toml\nRoot-owned, mode 0600\nProgram/provider/server identity\nubuntu; gateway token; RPC URL" as ServerConfig #FFF8EA
+  database "systemd journal\nLogin decision audit records" as Journal #FFF8EA
+}
+
+package "External integration services" as External #F2F6FA {
+  component "Authentication gateway\n/v1/sessions\nStore exact challenge + signed response\nDaemon routes require bearer token" as Gateway #EAF7ED
+  component "Solana JSON-RPC\ngetAccountInfo\ngetMultipleAccounts (minContextSlot)\ngetBlockTime" as RPC #EDE4FF
+  database "Program-owned accounts\nServerRecord\nSubscription\nAccessGrant (owner + signing wallet)" as Chain #EDE4FF
+}
+
+Workstation -[hidden]down-> VPS
+VPS -[hidden]down-> External
+
+Client --> SSHD : SSH TCP 22\ndemo: 127.0.0.2:2222
+SSHD --> PAM : PAM authentication hook
+SSHPolicy ..> SSHD : keyboard-interactive:pam
+PAM --> Sessions : /run/solana-authd.sock\nUnix socket; root-owned 0600\nStart / Wait / Cancel
+Sessions --> PAM : Login URL + expiry\nALLOW / DENY
+PAM ..> Protocol : IPC serialization
+Sessions ..> Protocol : Strict IPC parsing
+Sessions ..> Challenge : Create session challenge
+Sessions --> GatewayClient : Run within session deadline\nReturn a single login decision
+GatewayClient ..> Protocol : Gateway request/response DTOs
+GatewayClient ..> Challenge : Verify wallet signature + expiry
+GatewayClient --> RPCAdapter : Read snapshot for signing wallet
+GatewayClient ..> Access : Authorize snapshot
+RPCAdapter ..> Access : Derive PDAs; decode accounts\nValidate snapshot freshness
+Config --> ServerConfig : Read and validate at startup
+Config ..> Sessions : Identity, login account, socket
+Config ..> GatewayClient : Gateway URLs + bearer token
+Config ..> RPCAdapter : RPC URL + program identity
+Sessions --> Audit : Emit allow/deny decision
+Audit --> Journal : stdout via systemd
+GatewayClient --> Gateway : HTTPS + bearer token\nPOST challenge / GET response / DELETE session
+Wallet --> Gateway : Fetch exact challenge\nSubmit public key + signature
+RPCAdapter --> RPC : HTTPS JSON-RPC\nRead finalized accounts + block time
+RPC --> Chain : Read account state
+
+legend bottom left
+  |= Color |= Boundary / responsibility |
+  |<#EAF2FF> Blue | Client components |
+  |<#FFF0D9> Orange | VPS SSH enforcement |
+  |<#EAF7ED> Green | Daemon and gateway integration |
+  |<#EDE4FF> Purple | Shared verification code and Solana state |
+  Solid arrows: runtime interaction. Dotted arrows: code/configuration dependency.
+  Daemon components group functions; they are not separate services.
+  Failures deny login. In-memory sessions belong to one PAM socket connection.
+  Local test-services: gateway :8080, fixture RPC :8899, loopback HTTP only.
+  Local CLI signing replaces the browser; no deployed program or SOL transfer.
+  Login only reads on-chain state. Grant changes affect new logins.
+endlegend
+@enduml
