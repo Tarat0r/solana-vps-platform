@@ -1,14 +1,23 @@
 # Frontend
 
-**Lead:** Anurag
+**Lead:** Anurag  
+**Date:** 2026-10-11  
+**Last Updated:** 2026-10-11  
 
-Build the wallet-connected portal for Phantom and Solflare.
+Wallet-connected portal built with Next.js 16, React 19, Tailwind CSS 4, and official Solana Wallet Adapter.
 
 - Purchase and renew access with wallet-signed SOL transactions.
 - Show order/preparation status, paid-until time, and SSH instructions.
 - Manage delegated access and revocation.
-- Display and sign the daemon's exact SSH challenge.
+- Display, inspect, and sign the PAM daemon's 90-second SSH login challenge.
+- Live terminal console with automatic PAM challenge detection and quick action triggers.
 
-Start with the order/payment and challenge contracts in [shared/](../shared/). The backend verifies payment status; the daemon decides SSH access. Add setup and run commands when the frontend is implemented.
+## Development and Verification
 
-See [Architecture.md](../Architecture.md).
+```bash
+bun install
+bun run dev
+bun run build
+```
+
+See [Architecture.md](../Architecture.md) and [docs/commit-history.md](../docs/commit-history.md) for 3-day development history by Anurag.

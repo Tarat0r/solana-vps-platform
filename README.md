@@ -18,4 +18,12 @@ Start with [Architecture.md](Architecture.md) for the system design and implemen
 | [infra/](infra/) | Docker and Linux VM setup |
 | [tests/](tests/) | Integration and end-to-end scenarios |
 
+**Date:** 2026-10-11  
+**Last Updated:** 2026-10-11  
 **Status:** Initial scaffold. Implementation and run commands will be added as components are built.
+
+## Documentation and History
+
+- [Architecture.md](Architecture.md): Complete architecture specification, components, and responsibilities.
+- [docs/commit-history.md](docs/commit-history.md): Recent 3-day development commit history by Anurag Borkar (October 9 to October 11, 2026).
+- [docs/diagrams/](docs/diagrams/): Architecture and sequence diagrams.

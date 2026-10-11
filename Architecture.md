@@ -1,6 +1,8 @@
 # Solana VPS Access Architecture
 
 **Status:** Proposed proof of concept (POC)  
+**Date:** 2026-10-11  
+**Last Updated:** 2026-10-11  
 **Environment:** Docker backend, SQLite file, one local Linux VM/VPS, Solana devnet or testnet  
 **Billing:** Prepaid native SOL payments on Solana only  
 **Authentication:** OpenSSH + Linux PAM + Solana wallet signature  
@@ -38,6 +40,7 @@
   - [13.3. Bala: On-Chain Logic](#133-bala-on-chain-logic)
   - [13.4. Shared Interfaces and Integration Order](#134-shared-interfaces-and-integration-order)
 - [14. Future Improvements](#14-future-improvements)
+- [15. Commit History (Last 3 Days)](#15-commit-history-last-3-days)
 <!-- /TOC -->
 
 
@@ -442,3 +445,22 @@ Possible extensions are:
 - RPC redundancy, subscription monitoring, and bounded authorization caching with measured revocation delays.
 - Multisig provider administration, owner-wallet replacement, and wallet recovery procedures.
 - Production hardening, independent program/security reviews, and a mainnet rollout.
+
+## 15. Commit History (Last 3 Days)
+
+This section summarizes commits authored by Anurag Borkar over the last 3 development days (October 9 to October 11, 2026), covering the frontend and backend integration workstreams.
+
+| Date | Commit | Component | Description |
+|------|--------|-----------|-------------|
+| 2026-10-09 | `8f99463` | Backend | Implement Axum 0.8 service with SQLite persistence and order handlers |
+| 2026-10-09 | `849df9c` | Frontend | Build decentralized Solana VPS platform UI with PAM auth and terminal console |
+| 2026-10-10 | `2a1ffe2` | Integration | Merge develop/backend into develop/frontend |
+| 2026-10-10 | `f78d2fa` | Frontend | Integrate live backend API endpoints for orders and payment verification |
+| 2026-10-11 | `ac1463a` | Frontend | Add localnet cluster support, Web3Icons integration, and clean button styles |
+| 2026-10-11 | `4b1a714` | Fullstack | Implement auth gateway relay, payment attempts lifecycle, and SSH verification portal |
+| 2026-10-11 | `d68f1b5` | Frontend | Scaffold Next.js 16 app with wallet adapters and UI primitives |
+| 2026-10-11 | `afd44d4` | Frontend | Implement streamlined header, cluster switcher, and landing hero |
+| 2026-10-11 | `ef09326` | Frontend | Add AMD EPYC hardware tiers, pricing calculator, and architecture showcase |
+| 2026-10-11 | `698921e` | Frontend | Add PAM auth gateway verification portal, terminal console, and views |
+
+For the complete log and detailed file changes, see [docs/commit-history.md](docs/commit-history.md).
