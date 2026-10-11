@@ -17,3 +17,5 @@ Cover these scenarios as the components become available:
 Use shared non-secret fixtures from [shared/](../shared/). Record the cluster/program ID, transaction signatures, order/payment IDs, and redacted outcomes. Add test commands when the integration harness exists.
 
 See [Architecture.md](../Architecture.md).
+
+Download the Debian 13 cloud image: [debian-13-nocloud-amd64.qcow2](https://saimei.ftp.acc.umu.se/images/cloud/trixie/latest/debian-13-nocloud-amd64.qcow2).
