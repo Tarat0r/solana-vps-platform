@@ -9,6 +9,7 @@ use axum::{
     Router,
 };
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 use crate::handlers::{
     add_delegate, create_order, create_renewal_payment_attempt, delete_v1_session, get_challenge,
@@ -69,5 +70,6 @@ pub fn create_app(state: AppState) -> Router {
             post(submit_v1_response).get(poll_v1_response),
         )
         .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -17,6 +17,8 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
         .connect(database_url)
         .await?;
 
+    tracing::debug!("Ensuring SQLite database schema tables exist (orders, payment_attempts, delegates)");
+
     // Execute each DDL statement separately for reliable SQLite preparation
     sqlx::query(
         r#"
@@ -79,6 +81,7 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
         .unwrap_or((0,));
 
     if count.0 == 0 {
+        tracing::info!(seed_count = 3, "Database empty; seeding demo VPS orders and payment attempts");
         sqlx::query(
             r#"
             INSERT INTO orders (
@@ -119,7 +122,11 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
         )
         .execute(&pool)
         .await?;
+        tracing::info!("Seeding completed successfully");
+    } else {
+        tracing::debug!(existing_orders = count.0, "Database already initialized with records");
     }
 
+    tracing::info!("Database ready");
     Ok(pool)
 }

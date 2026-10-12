@@ -26,6 +26,15 @@ pub async fn create_order(
     let created_at = Utc::now().to_rfc3339();
     let status = OrderStatus::PaymentPending.to_string();
 
+    tracing::info!(
+        name = %payload.name,
+        owner = %payload.owner_wallet,
+        region = %payload.region,
+        period_days = payload.period_days,
+        price_lamports = %payload.price_lamports,
+        "Creating new VPS order"
+    );
+
     // Insert Order with server_id and active_payment_id
     sqlx::query(
         r#"
@@ -46,7 +55,10 @@ pub async fn create_order(
     .bind(&payment_id)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to insert order into database");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     // Create initial PaymentAttempt (Purchase)
     let payment_status = PaymentAttemptStatus::Pending.to_string();
@@ -65,7 +77,17 @@ pub async fn create_order(
     .bind(&created_at)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to insert initial payment attempt");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
+
+    tracing::info!(
+        order_id = %order_id,
+        server_id = %server_id,
+        payment_id = %payment_id,
+        "Order created successfully"
+    );
 
     let order = VPSOrder {
         order_id,
@@ -93,6 +115,8 @@ pub async fn list_orders(
     State(state): State<AppState>,
     Query(query): Query<ListOrdersQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(owner_filter = ?query.owner_wallet, "Listing VPS orders");
+
     let orders = if let Some(owner) = query.owner_wallet {
         sqlx::query_as::<_, VPSOrder>(
             "SELECT * FROM orders WHERE owner_wallet = ? ORDER BY created_at DESC",
@@ -105,8 +129,12 @@ pub async fn list_orders(
             .fetch_all(&state.db)
             .await
     }
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to list orders from database");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
+    tracing::debug!(count = orders.len(), "Retrieved orders");
     Ok(Json(orders))
 }
 
@@ -115,12 +143,20 @@ pub async fn get_order(
     State(state): State<AppState>,
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(order_id = %order_id, "Fetching order details");
+
     let order = sqlx::query_as::<_, VPSOrder>("SELECT * FROM orders WHERE order_id = ?")
         .bind(&order_id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Order not found".to_string()))?;
+        .map_err(|e| {
+            tracing::error!(order_id = %order_id, error = %e, "Database error retrieving order");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(order_id = %order_id, "Order not found");
+            (StatusCode::NOT_FOUND, "Order not found".to_string())
+        })?;
 
     Ok(Json(order))
 }
@@ -131,12 +167,25 @@ pub async fn verify_payment(
     Path(order_id): Path<String>,
     Json(payload): Json<VerifyPaymentPayload>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        order_id = %order_id,
+        tx_hash = %payload.tx_hash,
+        payment_id = ?payload.payment_id,
+        "Verifying payment attempt"
+    );
+
     let order = sqlx::query_as::<_, VPSOrder>("SELECT * FROM orders WHERE order_id = ?")
         .bind(&order_id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Order not found".to_string()))?;
+        .map_err(|e| {
+            tracing::error!(order_id = %order_id, error = %e, "Database error finding order for payment");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(order_id = %order_id, "Order not found for payment verification");
+            (StatusCode::NOT_FOUND, "Order not found".to_string())
+        })?;
 
     let now = Utc::now();
     let paid_until = (now + Duration::days(order.period_days as i64)).to_rfc3339();
@@ -158,7 +207,10 @@ pub async fn verify_payment(
         .bind(pid)
         .execute(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(payment_id = %pid, error = %e, "Failed to finalize payment attempt");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
     }
 
     // Update order status and assigned IP
@@ -176,7 +228,18 @@ pub async fn verify_payment(
     .bind(&order_id)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(order_id = %order_id, error = %e, "Failed to update order status to ACTIVE");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
+
+    tracing::info!(
+        order_id = %order_id,
+        host = assigned_ip,
+        paid_until = %paid_until,
+        payment_id = ?payment_id,
+        "Order payment verified; marked ACTIVE"
+    );
 
     Ok(Json(json!({
         "status": "success",
@@ -192,13 +255,18 @@ pub async fn list_payment_attempts(
     State(state): State<AppState>,
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(order_id = %order_id, "Listing payment attempts for order");
+
     let payments = sqlx::query_as::<_, PaymentAttempt>(
         "SELECT * FROM payment_attempts WHERE order_id = ? ORDER BY created_at DESC",
     )
     .bind(&order_id)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(order_id = %order_id, error = %e, "Failed to list payment attempts");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     Ok(Json(payments))
 }
@@ -208,12 +276,20 @@ pub async fn create_renewal_payment_attempt(
     State(state): State<AppState>,
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(order_id = %order_id, "Creating renewal payment attempt");
+
     let order = sqlx::query_as::<_, VPSOrder>("SELECT * FROM orders WHERE order_id = ?")
         .bind(&order_id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Order not found".to_string()))?;
+        .map_err(|e| {
+            tracing::error!(order_id = %order_id, error = %e, "Database error finding order for renewal");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(order_id = %order_id, "Order not found for renewal");
+            (StatusCode::NOT_FOUND, "Order not found".to_string())
+        })?;
 
     let payment_id = format!("pay_{}", &Uuid::new_v4().to_string().replace('-', "")[..16]);
     let created_at = Utc::now().to_rfc3339();
@@ -233,14 +309,26 @@ pub async fn create_renewal_payment_attempt(
     .bind(&created_at)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(payment_id = %payment_id, error = %e, "Failed to insert renewal payment attempt");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     sqlx::query("UPDATE orders SET active_payment_id = ? WHERE order_id = ?")
         .bind(&payment_id)
         .bind(&order_id)
         .execute(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(order_id = %order_id, error = %e, "Failed to update order active_payment_id");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+
+    tracing::info!(
+        order_id = %order_id,
+        payment_id = %payment_id,
+        "Renewal payment attempt created"
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -259,6 +347,8 @@ pub async fn create_renewal_payment_attempt(
 pub async fn get_challenge(
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(order_id = %order_id, "Generating SSH challenge for order");
+
     let now = Utc::now();
     let expires = (now + Duration::minutes(5)).to_rfc3339();
     let challenge = format!(
@@ -280,6 +370,12 @@ pub async fn respond_challenge(
     Path(order_id): Path<String>,
     Json(payload): Json<RespondChallengePayload>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        order_id = %order_id,
+        wallet = %payload.wallet_pubkey,
+        "SSH challenge responded"
+    );
+
     Ok(Json(json!({
         "status": "authenticated",
         "order_id": order_id,
@@ -293,6 +389,12 @@ pub async fn add_delegate(
     Path(order_id): Path<String>,
     Json(payload): Json<AddDelegatePayload>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        order_id = %order_id,
+        delegate = %payload.delegate_wallet,
+        "Adding delegate wallet to order"
+    );
+
     let created_at = Utc::now().to_rfc3339();
 
     sqlx::query(
@@ -303,7 +405,10 @@ pub async fn add_delegate(
     .bind(created_at)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(order_id = %order_id, error = %e, "Failed to add delegate");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     Ok((StatusCode::CREATED, Json(json!({ "status": "delegate_added" }))))
 }
@@ -313,12 +418,21 @@ pub async fn remove_delegate(
     State(state): State<AppState>,
     Path((order_id, delegate_wallet)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        order_id = %order_id,
+        delegate = %delegate_wallet,
+        "Removing delegate wallet from order"
+    );
+
     sqlx::query("DELETE FROM delegates WHERE order_id = ? AND delegate_wallet = ?")
         .bind(&order_id)
         .bind(&delegate_wallet)
         .execute(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(order_id = %order_id, error = %e, "Failed to remove delegate");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
 
     Ok(Json(json!({ "status": "delegate_removed" })))
 }
@@ -328,18 +442,21 @@ pub async fn list_delegates(
     State(state): State<AppState>,
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(order_id = %order_id, "Listing delegates for order");
+
     let delegates = sqlx::query_as::<_, crate::models::DelegateRecord>(
         "SELECT order_id, delegate_wallet, created_at FROM delegates WHERE order_id = ? ORDER BY created_at DESC",
     )
     .bind(&order_id)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(order_id = %order_id, error = %e, "Failed to list delegates");
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     Ok(Json(delegates))
 }
-
-
 
 // POST /api/gateway/challenges
 // Called by solana-authd to publish a locally generated 90-second challenge session
@@ -350,6 +467,13 @@ pub async fn publish_gateway_challenge(
     let session_id = format!("ses_{}", &Uuid::new_v4().to_string().replace('-', "")[..16]);
     let now = Utc::now();
     let expires = (now + Duration::seconds(90)).to_rfc3339();
+
+    tracing::info!(
+        session_id = %session_id,
+        server_id = %payload.server_id,
+        unix_user = %payload.unix_user,
+        "Publishing legacy gateway challenge"
+    );
 
     let session = crate::state::GatewaySession {
         session_id: session_id.clone(),
@@ -386,14 +510,20 @@ pub async fn get_gateway_challenge(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(session_id = %session_id, "Retrieving legacy gateway challenge");
+
     let sessions = state.gateway_sessions.read().await;
     let session = sessions
         .get(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Challenge session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "Legacy gateway challenge not found");
+            (StatusCode::NOT_FOUND, "Challenge session not found".to_string())
+        })?;
 
     // Check expiry
     if let Ok(expires_time) = chrono::DateTime::parse_from_rfc3339(&session.expires_at) {
         if Utc::now() > expires_time {
+            tracing::warn!(session_id = %session_id, "Legacy gateway challenge has expired (TTL 90s)");
             return Err((StatusCode::GONE, "Challenge session has expired (TTL 90s)".to_string()));
         }
     }
@@ -415,18 +545,29 @@ pub async fn submit_gateway_signature(
     Path(session_id): Path<String>,
     Json(payload): Json<crate::models::SubmitGatewaySignatureRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        session_id = %session_id,
+        wallet = %payload.wallet_pubkey,
+        "Submitting signature for legacy gateway challenge"
+    );
+
     let mut sessions = state.gateway_sessions.write().await;
     let session = sessions
         .get_mut(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Challenge session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "Legacy gateway session not found for response");
+            (StatusCode::NOT_FOUND, "Challenge session not found".to_string())
+        })?;
 
     if session.status != "PENDING" {
+        tracing::warn!(session_id = %session_id, status = %session.status, "Rejecting signature: session not pending");
         return Err((StatusCode::BAD_REQUEST, format!("Session is already {}", session.status)));
     }
 
     if let Ok(expires_time) = chrono::DateTime::parse_from_rfc3339(&session.expires_at) {
         if Utc::now() > expires_time {
             session.status = "EXPIRED".to_string();
+            tracing::warn!(session_id = %session_id, "Rejecting signature: legacy session expired");
             return Err((StatusCode::GONE, "Challenge session has expired".to_string()));
         }
     }
@@ -447,10 +588,15 @@ pub async fn poll_gateway_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(session_id = %session_id, "Polling legacy gateway session");
+
     let sessions = state.gateway_sessions.read().await;
     let session = sessions
         .get(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Challenge session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "Legacy gateway session not found for polling");
+            (StatusCode::NOT_FOUND, "Challenge session not found".to_string())
+        })?;
 
     Ok(Json(crate::models::PollGatewayResponse {
         session_id: session.session_id.clone(),
@@ -470,11 +616,13 @@ pub async fn publish_v1_session(
     let now = Utc::now();
     let expires_at_unix = payload.expires_at;
     if expires_at_unix <= now.timestamp() {
+        tracing::warn!(session_id = %payload.session_id, expires_at = expires_at_unix, "Rejected expired v1 session publication");
         return Err((StatusCode::BAD_REQUEST, "Challenge has already expired".to_string()));
     }
 
     let mut sessions = state.gateway_sessions.write().await;
     if sessions.contains_key(&payload.session_id) {
+        tracing::warn!(session_id = %payload.session_id, "Rejected duplicate v1 session publication");
         return Err((StatusCode::CONFLICT, "Session already exists".to_string()));
     }
 
@@ -496,6 +644,14 @@ pub async fn publish_v1_session(
             unix_user = val.trim().to_string();
         }
     }
+
+    tracing::info!(
+        session_id = %payload.session_id,
+        server_id = %server_id,
+        unix_user = %unix_user,
+        expires_at = expires_at_unix,
+        "Published v1 SSH auth gateway session"
+    );
 
     let session = crate::state::GatewaySession {
         session_id: payload.session_id.clone(),
@@ -523,12 +679,18 @@ pub async fn get_v1_session(
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     use base64::Engine;
+    tracing::debug!(session_id = %session_id, "Retrieving v1 auth gateway challenge session");
+
     let sessions = state.gateway_sessions.read().await;
     let session = sessions
         .get(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "v1 session not found");
+            (StatusCode::NOT_FOUND, "Session not found".to_string())
+        })?;
 
     if Utc::now().timestamp() > session.expires_at_unix {
+        tracing::warn!(session_id = %session_id, "v1 session expired");
         return Err((StatusCode::GONE, "Session expired".to_string()));
     }
 
@@ -550,17 +712,28 @@ pub async fn submit_v1_response(
     Path(session_id): Path<String>,
     Json(payload): Json<crate::models::SubmitV1ResponseRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(
+        session_id = %session_id,
+        wallet = %payload.wallet,
+        "Submitting wallet proof for v1 gateway session"
+    );
+
     let mut sessions = state.gateway_sessions.write().await;
     let session = sessions
         .get_mut(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "v1 session not found for response submission");
+            (StatusCode::NOT_FOUND, "Session not found".to_string())
+        })?;
 
     if session.status != "PENDING" {
+        tracing::warn!(session_id = %session_id, status = %session.status, "Rejecting v1 response: already responded");
         return Err((StatusCode::CONFLICT, "Session already responded".to_string()));
     }
 
     if Utc::now().timestamp() > session.expires_at_unix {
         session.status = "EXPIRED".to_string();
+        tracing::warn!(session_id = %session_id, "Rejecting v1 response: session expired");
         return Err((StatusCode::GONE, "Session expired".to_string()));
     }
 
@@ -568,6 +741,7 @@ pub async fn submit_v1_response(
     session.signature = Some(payload.signature_base64);
     session.status = "SUBMITTED".to_string();
 
+    tracing::info!(session_id = %session_id, "Wallet proof accepted; session marked SUBMITTED");
     Ok((StatusCode::ACCEPTED, ()))
 }
 
@@ -577,10 +751,15 @@ pub async fn poll_v1_response(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::debug!(session_id = %session_id, "Polling v1 gateway session response");
+
     let sessions = state.gateway_sessions.read().await;
     let session = sessions
         .get(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!(session_id = %session_id, "v1 session not found for polling");
+            (StatusCode::NOT_FOUND, "Session not found".to_string())
+        })?;
 
     if session.status == "PENDING" {
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -588,6 +767,7 @@ pub async fn poll_v1_response(
 
     if session.status == "SUBMITTED" {
         if let (Some(wallet), Some(sig)) = (&session.wallet_pubkey, &session.signature) {
+            tracing::info!(session_id = %session_id, wallet = %wallet, "Returning submitted wallet proof to polling client");
             return Ok((
                 StatusCode::OK,
                 Json(crate::models::V1SignedResponse {
@@ -599,6 +779,7 @@ pub async fn poll_v1_response(
         }
     }
 
+    tracing::warn!(session_id = %session_id, status = %session.status, "v1 session expired or invalid during poll");
     Err((StatusCode::GONE, "Session expired or invalid".to_string()))
 }
 
@@ -608,8 +789,9 @@ pub async fn delete_v1_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    tracing::info!(session_id = %session_id, "Deleting v1 auth gateway session");
+
     let mut sessions = state.gateway_sessions.write().await;
     sessions.remove(&session_id);
     Ok((StatusCode::NO_CONTENT, ()))
 }
-
