@@ -1,8 +1,6 @@
 # Solana VPS Access Architecture
 
-**Status:** Proposed proof of concept (POC)  
-**Date:** 2026-10-11  
-**Last Updated:** 2026-10-11  
+**Status:** Proposed proof of concept (POC) 
 **Environment:** Docker backend, SQLite file, one local Linux VM/VPS, Solana devnet or testnet  
 **Billing:** Prepaid native SOL payments on Solana only  
 **Authentication:** OpenSSH + Linux PAM + Solana wallet signature  
