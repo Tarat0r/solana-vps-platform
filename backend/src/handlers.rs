@@ -469,6 +469,15 @@ pub async fn publish_v1_session(
     use base64::Engine;
     let now = Utc::now();
     let expires_at_unix = payload.expires_at;
+    if expires_at_unix <= now.timestamp() {
+        return Err((StatusCode::BAD_REQUEST, "Challenge has already expired".to_string()));
+    }
+
+    let mut sessions = state.gateway_sessions.write().await;
+    if sessions.contains_key(&payload.session_id) {
+        return Err((StatusCode::CONFLICT, "Session already exists".to_string()));
+    }
+
     let expires = chrono::DateTime::from_timestamp(expires_at_unix, 0)
         .map(|t| t.to_rfc3339())
         .unwrap_or_else(|| (now + Duration::seconds(90)).to_rfc3339());
@@ -502,7 +511,6 @@ pub async fn publish_v1_session(
         status: "PENDING".to_string(),
     };
 
-    let mut sessions = state.gateway_sessions.write().await;
     sessions.insert(payload.session_id.clone(), session);
 
     Ok((StatusCode::CREATED, ()))
