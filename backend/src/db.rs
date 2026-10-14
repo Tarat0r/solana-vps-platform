@@ -74,6 +74,13 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     .execute(&pool)
     .await?;
 
+    // Migrate any legacy mock wallet addresses to valid ed25519 demo public key
+    let _ = sqlx::query(
+        "UPDATE orders SET owner_wallet = '2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ' WHERE owner_wallet = '8xP3kM9L71z4QvB9mK1xY2qT4L8z9QvB9mK1xY2q'",
+    )
+    .execute(&pool)
+    .await;
+
     // Seed default demo orders if orders table is empty
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
         .fetch_one(&pool)
@@ -90,19 +97,19 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
             ) VALUES
             (
                 'ord_active_01', 'srv_fra_01', 'vps-solana-validator-fra',
-                '8xP3kM9L71z4QvB9mK1xY2qT4L8z9QvB9mK1xY2q', 'Frankfurt (eu-central-1)',
+                '2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ', 'Frankfurt (eu-central-1)',
                 'ACTIVE', '50000000', 7, '2025-05-10T12:00:00Z', '2025-05-17T12:00:00Z',
                 '185.220.101.42', 22, 'ubuntu', '5xK9MockSolanaTxHashActive11894a', 'pay_init_01'
             ),
             (
                 'ord_pending_02', 'srv_ash_02', 'vps-rust-build-box',
-                '8xP3kM9L71z4QvB9mK1xY2qT4L8z9QvB9mK1xY2q', 'Ashburn (us-east-1)',
+                '2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ', 'Ashburn (us-east-1)',
                 'PAYMENT_PENDING', '50000000', 7, '2025-05-12T08:15:00Z', NULL,
                 'TBD', 22, 'ubuntu', NULL, 'pay_init_02'
             ),
             (
                 'ord_prov_03', 'srv_sg_03', 'vps-rpc-proxy-sg',
-                '8xP3kM9L71z4QvB9mK1xY2qT4L8z9QvB9mK1xY2q', 'Singapore (ap-southeast-1)',
+                '2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ', 'Singapore (ap-southeast-1)',
                 'PROVISIONING', '90000000', 14, '2025-05-12T09:40:00Z', NULL,
                 '103.25.14.88', 22, 'ubuntu', '4h99SolanaTxConfirmProv771a', 'pay_init_03'
             )
