@@ -2,3 +2,9 @@
 /.env
 # Local state from ./run.sh: validator ledger, provider key, gateway token.
 /.run/
+# Server addresses and credentials; never commit.
+/infra/vps.conf
+# Release binaries built for the public servers by infra/deploy.sh.
+/.deploy/
+# Real deployment settings for infra/deploy.sh.
+/infra/deploy.env

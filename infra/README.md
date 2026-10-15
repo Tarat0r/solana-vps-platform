@@ -14,6 +14,26 @@ Verify daemon-to-gateway/RPC connectivity, browser access, synchronized clocks, 
 
 The local fixture harness exposes SSH at `127.0.0.2:2222`; gateway/RPC forwarding and guest addresses are documented in the SSH README. Do not install its fixture services or keys on a real server.
 
+## Public deployment
+
+[deploy.sh](deploy.sh) installs the system on public Ubuntu 26.04 servers that share one address with a separate SSH port each: a backend for the gateway and dashboard, and one server per devnet registration from `./run.sh --devnet`. Copy [deploy.env.example](deploy.env.example) to `deploy.env` (git-ignored), set the address, ports, domain, and the backend's private address, then run:
+
+```sh
+infra/deploy.sh build      # binaries built in an ubuntu:26.04 container, and the frontend
+infra/deploy.sh cert       # Let's Encrypt certificate; add the DNS TXT record it shows
+infra/deploy.sh backend    # gateway, dashboard, and nginx with TLS on port 8080
+infra/deploy.sh server 1   # wallet-only SSH for ubuntu; repeat for each server
+infra/deploy.sh status
+```
+
+- **Access:** root logs in only with the configured SSH key. `ubuntu` logs in only with a wallet signature, through the daemon and PAM module.
+- **Certificate:** the provider forwards a non-standard public port to the backend's 8080, and Let's Encrypt cannot reach ports 80 or 443. `cert` therefore uses a DNS-01 challenge with no DNS API key: it shows a TXT record, then continues once the domain's name servers serve it. The certificate lasts about 90 days; rerun `cert` in its last 30 days.
+- **Private network:** the public address does not loop back inside the provider network. Each server maps the domain to the backend's private address in `/etc/hosts`, so its daemon reaches the gateway with the real certificate, and `local_test` stays off.
+- **Lockout protection:** `server` changes sshd and PAM behind a 10-minute timer that restores the previous configuration. The timer is cancelled only after a new root key login succeeds. The previous PAM file is kept as `/etc/pam.d/sshd.before-solana`.
+- **Logging:** nginx keeps no access log, because request paths contain signing-session IDs.
+
+The current deployment serves the dashboard at `https://vps.oblaka.top:6441`. The servers for sale are `ssh -p 6108 ubuntu@vps.oblaka.top` (30-day term) and `ssh -p 6107 ubuntu@vps.oblaka.top` (10-minute term).
+
 ## Gateway in Docker
 
 [compose.yaml](../compose.yaml) runs the gateway with the built frontend in Docker; see [the backend README](../backend/README.md#run-with-docker). The Solana program and the SSH server stay outside Docker: the program runs on devnet, or on `solana-test-validator` for local work, and the PAM module and daemon run on the Debian server.
