@@ -1,0 +1,15 @@
+{
+  "cluster": "devnet",
+  "rpc_url": "https://api.devnet.solana.com",
+  "program_id": "FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY",
+  "provider_pubkey": "<provider-public-key>",
+  "servers": [
+    {
+      "name": "Server 1",
+      "server_id": "<64-lowercase-hex-characters from that server's server.toml>",
+      "unix_user": "ubuntu",
+      "ssh_host": "<server-hostname-or-ip>",
+      "ssh_port": 22
+    }
+  ]
+}

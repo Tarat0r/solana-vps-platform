@@ -1,0 +1,31 @@
+# The gateway and frontend: the Axum backend serving the owner dashboard and
+# SSH signing page. The Solana program and the SSH server run outside Docker,
+# on devnet or solana-test-validator and on the Debian VM.
+#
+#   cp backend/dashboard.json.example backend/dashboard.json   # then fill it in
+#   SOLANA_GATEWAY_TOKEN=<daemon gateway_token> docker compose up --build
+#
+# See backend/README.md.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: wallet-ssh/gateway
+    environment:
+      # Passed through from the shell or .env: the same secret as gateway_token
+      # in the daemon's server.toml. The gateway refuses to start without it.
+      SOLANA_GATEWAY_TOKEN:
+      SOLANA_DASHBOARD_CONFIG: /config/dashboard.json
+    volumes:
+      - type: bind
+        source: ${DASHBOARD_CONFIG:-./backend/dashboard.json}
+        target: /config/dashboard.json
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      # Loopback by default; publish the HTTPS origin through a reverse proxy.
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT:-3000}:3000"
+    restart: unless-stopped
