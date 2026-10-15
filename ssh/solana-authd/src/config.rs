@@ -23,6 +23,8 @@ pub struct Config {
     pub challenge_ttl_seconds: u64,
     #[serde(default)]
     pub local_test: bool,
+    #[serde(default)]
+    pub local_test_lan_http: bool,
     #[serde(default = "default_socket")]
     pub socket_path: String,
 }
@@ -66,8 +68,8 @@ impl Config {
         self.identity().validate()?;
         ensure!(self.unix_user != "root", "root SSH login is not supported");
         ensure!(
-            self.commitment == "finalized" && self.challenge_ttl_seconds == 90,
-            "require finalized commitment and 90-second challenges"
+            self.commitment == "finalized" && self.challenge_ttl_seconds == auth_core::TTL_SECONDS,
+            "require finalized commitment and 300-second challenges"
         );
         ensure!(
             self.gateway_token.len() >= 32
@@ -79,7 +81,14 @@ impl Config {
             !self.local_test || self.cluster == "localnet",
             "HTTP test mode requires localnet"
         );
-        for value in [&self.auth_gateway, &self.auth_origin, &self.rpc_url] {
+        ensure!(
+            !self.local_test_lan_http || self.local_test,
+            "LAN HTTP is only available in explicit localnet test mode"
+        );
+        for (index, value) in [&self.auth_gateway, &self.auth_origin, &self.rpc_url]
+            .into_iter()
+            .enumerate()
+        {
             let url = reqwest::Url::parse(value).context("invalid endpoint URL")?;
             ensure!(
                 url.username().is_empty()
@@ -97,8 +106,15 @@ impl Config {
                         .ok()
                 })
                 .is_some_and(|ip| ip.is_loopback());
+            let private_lan = index == 1
+                && self.local_test_lan_http
+                && url
+                    .host_str()
+                    .and_then(|host| host.parse::<std::net::Ipv4Addr>().ok())
+                    .is_some_and(|ip| ip.is_private());
             ensure!(
-                url.scheme() == "https" || (self.local_test && url.scheme() == "http" && loopback),
+                url.scheme() == "https"
+                    || (self.local_test && url.scheme() == "http" && (loopback || private_lan)),
                 "require HTTPS, or explicit loopback HTTP tests"
             );
             ensure!(
@@ -137,10 +153,29 @@ mod tests {
             auth_origin: "http://127.0.0.2:8080".into(),
             gateway_token: "a".repeat(32),
             commitment: "finalized".into(),
-            challenge_ttl_seconds: 90,
+            challenge_ttl_seconds: auth_core::TTL_SECONDS,
             local_test: true,
+            local_test_lan_http: false,
             socket_path: default_socket(),
         }
+    }
+
+    #[test]
+    fn lan_http_is_opt_in_and_only_changes_the_public_test_origin() {
+        let mut c = config();
+        c.auth_origin = "http://192.168.1.9:8080".into();
+        assert!(c.validate().is_err());
+        c.local_test_lan_http = true;
+        assert!(c.validate().is_ok());
+        c.auth_gateway = c.auth_origin.clone();
+        assert!(c.validate().is_err());
+        c.auth_gateway = "http://127.0.0.1:8080".into();
+        c.auth_origin = "http://8.8.8.8:8080".into();
+        assert!(c.validate().is_err());
+        c.auth_origin = "http://192.168.1.9:8080".into();
+        c.local_test = false;
+        c.cluster = "devnet".into();
+        assert!(c.validate().is_err());
     }
 
     #[test]
@@ -150,7 +185,7 @@ mod tests {
             |c| c.local_test = false,
             |c| c.cluster = "devnet".into(),
             |c| c.commitment = "processed".into(),
-            |c| c.challenge_ttl_seconds = 91,
+            |c| c.challenge_ttl_seconds = 90,
             |c| c.unix_user = "root".into(),
             |c| c.auth_origin = "http://example.com".into(),
             |c| c.auth_gateway = "http://127.0.0.1@evil.example".into(),

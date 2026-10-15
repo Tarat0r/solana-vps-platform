@@ -24,6 +24,23 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 toml = "0.8"
 auth-core = { path = "auth-core" }
 
+# Lint levels for every crate; ./static-analysis.sh runs Clippy with -D warnings.
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+# A panic in the PAM module or daemon aborts a login; unwrap and expect are for tests (clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+# Expiry times are i64 on chain and u64/usize locally.
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+dbg_macro = "warn"
+todo = "warn"
+
 [profile.release]
 strip = true
 lto = "thin"

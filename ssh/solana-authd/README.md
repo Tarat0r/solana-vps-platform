@@ -2,7 +2,7 @@
 
 Run `solana-authd /etc/solana-auth/server.toml` as root with a root-owned mode-0600
 configuration. The daemon accepts root Unix-socket peers and at most 64 concurrent
-connections. Each session belongs to one connection, lasts 90 seconds, and can
+connections. Each session belongs to one connection, lasts 5 minutes, and can
 return success once. Restart invalidates all pending local sessions.
 
 It publishes exact challenge bytes, polls wallet responses, verifies strict

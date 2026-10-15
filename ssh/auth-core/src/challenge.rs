@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use rand::{rngs::OsRng, RngCore};
 
-use crate::{hex, hex32, protocol::SignedResponse, pubkey, TTL_SECONDS};
+use crate::{hex, hex32, protocol::SignedResponse, pubkey, TTL_SECONDS_I64};
 
 #[derive(Clone, Debug)]
 pub struct Identity {
@@ -64,7 +64,7 @@ impl Challenge {
         identity.validate()?;
         let id = hex(&id);
         let expires_at = now
-            .checked_add(TTL_SECONDS as i64)
+            .checked_add(TTL_SECONDS_I64)
             .ok_or_else(|| anyhow::anyhow!("clock overflow"))?;
         let text = format!(
             "VPS-ACCESS-AUTH/1\ncluster={}\nprogram_id={}\nprovider={}\nserver_id={}\nunix_user={}\nsession_id={}\nnonce={}\nissued_at={}\nexpires_at={}\nauth_origin={}\n",
@@ -80,7 +80,7 @@ impl Challenge {
 
     pub fn verify(&self, proof: &SignedResponse, now: i64) -> Result<[u8; 32]> {
         ensure!(
-            now < self.expires_at && now >= self.expires_at - TTL_SECONDS as i64,
+            now < self.expires_at && now >= self.expires_at - TTL_SECONDS_I64,
             "expired challenge or clock rollback"
         );
         let wallet = pubkey(&proof.wallet)?;
@@ -111,15 +111,15 @@ mod tests {
     fn canonical_bytes_and_signature_binding() {
         let mut identity = identity();
         let c = Challenge::with_entropy(&identity, 1000, [4; 32], [5; 32]).unwrap();
-        let expected = format!("VPS-ACCESS-AUTH/1\ncluster=localnet\nprogram_id={}\nprovider={}\nserver_id={}\nunix_user=ubuntu\nsession_id={}\nnonce={}\nissued_at=1000\nexpires_at=1090\nauth_origin=http://127.0.0.2:8080\n", identity.program_id, identity.provider, hex(&[3;32]), hex(&[4;32]), hex(&[5;32]));
+        let expected = format!("VPS-ACCESS-AUTH/1\ncluster=localnet\nprogram_id={}\nprovider={}\nserver_id={}\nunix_user=ubuntu\nsession_id={}\nnonce={}\nissued_at=1000\nexpires_at=1300\nauth_origin=http://127.0.0.2:8080\n", identity.program_id, identity.provider, hex(&[3;32]), hex(&[4;32]), hex(&[5;32]));
         assert_eq!(c.bytes, expected.as_bytes());
         let key = SigningKey::from_bytes(&[7; 32]);
         let proof = SignedResponse {
             wallet: bs58::encode(key.verifying_key().to_bytes()).into_string(),
             signature_base64: STANDARD.encode(key.sign(&c.bytes).to_bytes()),
         };
-        assert!(c.verify(&proof, 1089).is_ok());
-        assert!(c.verify(&proof, 1090).is_err());
+        assert!(c.verify(&proof, 1299).is_ok());
+        assert!(c.verify(&proof, 1300).is_err());
         assert!(c.verify(&proof, 999).is_err());
         identity.unix_user = "root".into();
         assert!(Challenge::with_entropy(&identity, 1000, [4; 32], [5; 32])

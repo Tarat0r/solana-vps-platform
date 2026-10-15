@@ -3,13 +3,17 @@ pub mod challenge;
 pub mod protocol;
 
 pub const VERSION: u8 = 1;
-pub const TTL_SECONDS: u64 = 90;
+pub const TTL_SECONDS: u64 = 300;
+/// [`TTL_SECONDS`] for arithmetic on signed Unix times.
+#[expect(clippy::cast_possible_wrap, reason = "300 fits in i64")]
+pub const TTL_SECONDS_I64: i64 = TTL_SECONDS as i64;
 pub const MAX_FRAME: usize = 16 * 1024;
 
 pub fn unix_time() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
         .unwrap_or(0)
 }
 

@@ -55,6 +55,10 @@ impl Account for AccessGrant {
     const NAME: &'static str = "AccessGrant";
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "borsh writes fixed-size fields into a Vec, which cannot fail"
+)]
 pub fn encode<T: Account>(account: &T) -> Vec<u8> {
     let mut data = Sha256::digest(format!("account:{}", T::NAME))[..8].to_vec();
     data.extend(borsh::to_vec(account).expect("serializing fixed account fields"));

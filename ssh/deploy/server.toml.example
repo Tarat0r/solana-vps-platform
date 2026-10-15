@@ -9,6 +9,6 @@ auth_gateway = "https://auth.provider.example"
 auth_origin = "https://auth.provider.example"
 gateway_token = "<random-daemon-token-at-least-32-characters>"
 commitment = "finalized"
-challenge_ttl_seconds = 90
+challenge_ttl_seconds = 300
 local_test = false
 socket_path = "/run/solana-authd.sock"

@@ -1,8 +1,10 @@
 # Authentication contract v1
 
-This contract is provisional: the billing/access program and production gateway
-are not implemented in this repository. Fixtures exercise real daemon validation;
-they do not establish compatibility with a deployed program.
+This contract is provisional until a devnet program and the production gateway
+are tested together. The billing/access program's tests decode its accounts with
+auth-core and, on solana-test-validator, authorize logins through the daemon's
+finalized RPC reader. SSH fixtures exercise real daemon validation over synthetic
+RPC data.
 
 ## Challenge and wallet proof
 
@@ -11,7 +13,7 @@ The exact signed bytes are UTF-8, LF-separated, ending in LF, in this order:
 `session_id`, `nonce`, `issued_at`, `expires_at`, `auth_origin`. Fields after the
 first line are `name=value`. Public keys are base58; server ID, session ID, and
 nonce are 32 bytes encoded as lowercase hex. Times are integer UTC Unix seconds.
-Lifetime is exactly 90 seconds. See the golden-byte test in auth-core.
+Lifetime is exactly 300 seconds (5 minutes). See the golden-byte test in auth-core.
 
 Wallet responses contain `wallet` (base58 public key) and `signature_base64`
 (standard padded base64 of a 64-byte Ed25519 signature). No transaction is signed.

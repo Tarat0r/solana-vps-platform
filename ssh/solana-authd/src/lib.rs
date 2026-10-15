@@ -1,12 +1,14 @@
+// geteuid, flock, and peer credentials need libc.
+#![allow(unsafe_code)]
 pub mod config;
-mod rpc;
+pub mod rpc;
 
 use anyhow::{ensure, Result};
 use auth_core::{
     challenge::Challenge,
     hex32,
     protocol::{PublishedChallenge, Request, Response, SignedResponse},
-    pubkey, unix_time, MAX_FRAME, TTL_SECONDS, VERSION,
+    pubkey, unix_time, MAX_FRAME, TTL_SECONDS, TTL_SECONDS_I64, VERSION,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use config::Config;
@@ -46,7 +48,7 @@ impl Session {
             !self.consumed
                 && Instant::now() < self.deadline
                 && unix_time() < self.challenge.expires_at
-                && unix_time() >= self.challenge.expires_at - TTL_SECONDS as i64,
+                && unix_time() >= self.challenge.expires_at - TTL_SECONDS_I64,
             "session expired or consumed"
         );
         self.consumed = true;
@@ -237,7 +239,9 @@ async fn handle(
 }
 
 pub async fn serve(config: Config) -> Result<()> {
-    ensure!(unsafe { libc::geteuid() } == 0, "daemon must run as root");
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    ensure!(euid == 0, "daemon must run as root");
     config.validate()?;
     let socket_path = config.socket_path.clone();
     let socket = Path::new(&socket_path);
@@ -257,10 +261,9 @@ pub async fn serve(config: Config) -> Result<()> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(socket.with_extension("lock"))?;
-    ensure!(
-        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-        "daemon already running"
-    );
+    // SAFETY: the descriptor belongs to `lock`, which stays open while the daemon runs.
+    let locked = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    ensure!(locked, "daemon already running");
     if let Ok(meta) = std::fs::symlink_metadata(socket) {
         ensure!(
             meta.file_type().is_socket() && meta.uid() == 0,
@@ -268,6 +271,7 @@ pub async fn serve(config: Config) -> Result<()> {
         );
         std::fs::remove_file(socket)?;
     }
+    // SAFETY: umask only replaces the process's file-mode mask, so the socket is private from creation.
     unsafe {
         libc::umask(0o077);
     }
@@ -331,9 +335,9 @@ mod tests {
             challenge: Challenge {
                 id: "test".into(),
                 bytes: vec![],
-                expires_at: unix_time() + 90,
+                expires_at: unix_time() + TTL_SECONDS_I64,
             },
-            deadline: Instant::now() + Duration::from_secs(90),
+            deadline: Instant::now() + Duration::from_secs(TTL_SECONDS),
             consumed: false,
         };
         assert!(session.consume().is_ok());
