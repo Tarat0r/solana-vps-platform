@@ -71,6 +71,12 @@ test('expired publications and expired session retrieval are rejected', async ()
   assert.equal((await request('/v1/sessions/' + challenge.session_id)).status, 410);
 });
 
+test('publications may last exactly the 5-minute challenge lifetime', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal((await request('/v1/sessions', 'POST', { session_id: 'a1'.repeat(32), challenge_base64: 'AA==', expires_at: now + 300 }, true)).status, 201);
+  assert.equal((await request('/v1/sessions', 'POST', { session_id: 'a2'.repeat(32), challenge_base64: 'AA==', expires_at: now + 305 }, true)).status, 400);
+});
+
 test('test controls require authentication and reject unknown scenarios', async () => {
   assert.equal((await request('/_test/scenario', 'POST', { scenario: 'disabled' })).status, 401);
   assert.equal((await request('/_test/scenario', 'POST', { scenario: 'unknown' }, true)).status, 400);

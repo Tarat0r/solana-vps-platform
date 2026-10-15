@@ -1,11 +1,12 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Console, root, secrets, stateDir } from './vm.ts';
 import { gatewayOrigin } from './network.ts';
+import { phoneGuestCommand, readPhoneProfile } from './phone.ts';
 
 const gateway = gatewayOrigin;
 const cases: string[] = [];
@@ -25,7 +26,7 @@ async function api(endpoint: string, body?: unknown) {
 
 async function scenario(mode: string) { await api('/_test/scenario', { scenario: mode }); }
 
-function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: string) {
+function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: string, killAfterMs = 120_000, env: Record<string, string> = {}) {
   const directory = fs.mkdtempSync(path.join(stateDir, 'case-'));
   cases.push(directory);
   const process = spawn('ssh', [
@@ -36,13 +37,13 @@ function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: s
     `${user}@127.0.0.2`, 'id -un',
   ], {
     detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...globalThis.process.env, SSH_ASKPASS: path.join(root, 'tests/askpass.sh'), SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':solana-test', SSH_TEST_CASE: directory, SSH_TEST_MODE: mode, SSH_TEST_REPLAY: replay },
+    env: { ...globalThis.process.env, SSH_ASKPASS: path.join(root, 'tests/askpass.sh'), SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':solana-test', SSH_TEST_CASE: directory, SSH_TEST_MODE: mode, SSH_TEST_REPLAY: replay, ...env },
   });
   children.add(process);
   let stdout = ''; let stderr = '';
   process.stdout!.on('data', data => { stdout += data; });
   process.stderr!.on('data', data => { stderr += data; });
-  const timeout = setTimeout(() => { try { globalThis.process.kill(-process.pid!, 'SIGKILL'); } catch { /* exited */ } }, 120_000);
+  const timeout = setTimeout(() => { try { globalThis.process.kill(-process.pid!, 'SIGKILL'); } catch { /* exited */ } }, killAfterMs);
   const done = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     process.once('error', reject);
     process.once('close', code => { clearTimeout(timeout); children.delete(process); resolve({ code, stdout, stderr: stderr.replace(/https?:\/\/\S+/g, '[redacted URL]') }); });
@@ -106,6 +107,87 @@ check('paid owner and delegated wallet reach the configured Linux account', asyn
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout.trim(), 'ubuntu');
     await waitForCleanup();
+  }
+});
+
+check('interactive OpenSSH displays the signing link and QR before wallet login', async () => {
+  const command = [
+    'ssh', '-F', '/dev/null', '-p', '2222', '-o', 'ConnectTimeout=10',
+    '-o', 'StrictHostKeyChecking=yes', '-o', `UserKnownHostsFile="${path.join(stateDir, 'known_hosts')}"`,
+    '-o', 'PreferredAuthentications=keyboard-interactive', '-o', 'NumberOfPasswordPrompts=1',
+    'ubuntu@127.0.0.2', 'id -un',
+  ].map(value => "'" + value.replaceAll("'", "'\\''") + "'").join(' ');
+  const child = spawn('script', ['--quiet', '--return', '--flush', '--command', command, '/dev/null'], {
+    detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, SSH_ASKPASS_REQUIRE: 'never', LC_ALL: 'C.UTF-8', TERM: 'xterm-256color' },
+  });
+  children.add(child);
+  let output = '';
+  child.stdout!.on('data', bytes => { output += bytes; });
+  child.stderr!.on('data', bytes => { output += bytes; });
+  const done = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  const timer = setTimeout(() => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* exited */ } }, 20_000);
+  try {
+    let url: string | undefined;
+    for (let index = 0; index < 100; index++) {
+      url = output.match(/http:\/\/127\.0\.0\.2:[0-9]+\/v1\/sessions\/[a-f0-9]{64}/)?.[0];
+      if (url) break;
+      await sleep(100);
+    }
+    assert.ok(url, 'interactive SSH must display its signing URL');
+    assert.equal(new URL(url).origin, gateway);
+    assert.match(output, /Scan this code on your phone/);
+    const rows = output.split(/\r?\n/).filter(line => /^[█▀▄ ]+$/.test(line) && /[█▀▄]/.test(line));
+    assert.ok(rows.length >= 20, 'interactive SSH must display the entire compact QR');
+    const width = rows[0]?.length;
+    assert.ok(rows.every(row => row.length === width && row.length <= 80));
+    assert.ok(/(?:[█▀▄ ]{40,80}\r?\n){20,}/.test(output), 'QR rows must be contiguous to remain scannable');
+    const html = await fetch(url, { headers: { Accept: 'text/html' } });
+    assert.equal(html.status, 200);
+    assert.match(html.headers.get('content-type')!, /^text\/html/);
+    const asset = (await html.text()).match(/src="(\/assets\/[^\"]+\.js)"/)?.[1];
+    assert.ok(asset, 'VM must serve the built browser signing page');
+    assert.equal((await fetch(new URL(asset, url))).status, 200);
+    const proof = execFileSync(path.join(root, 'target/debug/test-services'), ['proof', url, 'owner'], { encoding: 'utf8', timeout: 15_000 });
+    const response = await fetch(url + '/response', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: proof });
+    assert.equal(response.status, 202);
+    child.stdin!.write('\n');
+    assert.equal(await done, 0, 'interactive wallet login must reach the shell');
+    assert.match(output, /(?:\r?\n)ubuntu\r?\n/);
+    await waitForCleanup();
+  } finally {
+    clearTimeout(timer);
+    children.delete(child);
+    if (child.exitCode === null) { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* exited */ } }
+  }
+});
+
+check('phone mode signs through its HTTPS origin with only the granted wallet', async () => {
+  const directory = fs.mkdtempSync(path.join(stateDir, 'case-'));
+  cases.push(directory);
+  const keyFile = path.join(directory, 'phone-wallet.json');
+  const wallet = execFileSync(path.join(root, 'target/debug/test-services'), ['keygen', keyFile], { encoding: 'utf8' }).trim();
+  const origin = 'https://phone-test.example.com';
+  const env = { SSH_TEST_ORIGIN: origin, SOLANA_TEST_WALLET_FILE: keyFile };
+  await terminal.command(phoneGuestCommand({ origin, wallet }));
+  try {
+    const allowed = login('phone', 'ubuntu', [], undefined, undefined, env);
+    const result = await allowed.done;
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'ubuntu');
+    assert.equal(new URL(fs.readFileSync(path.join(allowed.directory, 'url'), 'utf8')).origin, origin);
+    await waitForCleanup();
+    // The phone wallet holds a delegated grant, so delegate revocation must deny it.
+    await scenario('delegate_revoked');
+    const revoked = login('phone', 'ubuntu', [], undefined, undefined, env);
+    assert.notEqual((await revoked.done).code, 0);
+    assert.ok(fs.existsSync(path.join(revoked.directory, 'proof.json')), 'denial must follow a signed phone-wallet challenge');
+  } finally {
+    // Restarting the services also restores the allow scenario.
+    await terminal.command(phoneGuestCommand(readPhoneProfile(stateDir)));
   }
 });
 
@@ -192,10 +274,11 @@ check('gateway and daemon outages deny login; console recovery remains usable', 
   assert.equal((await login().done).code, 0);
 });
 
-check('unsigned login expires at the real 90-second deadline', async () => {
+check('unsigned login expires at the real 5-minute deadline', async () => {
   const start = Date.now();
-  const result = await login('unsigned').done;
+  const result = await login('unsigned', 'ubuntu', [], undefined, 360_000).done;
   assert.notEqual(result.code, 0);
-  assert.ok(Date.now() - start >= 85_000, 'authentication ended before the challenge lifetime');
-  assert.ok(Date.now() - start < 110_000, 'authentication exceeded its bounded deadline');
-});
+  assert.ok(Date.now() - start >= 295_000, 'authentication ended before the challenge lifetime');
+  // sshd LoginGraceTime (320 s) bounds the attempt if the daemon deadline fails.
+  assert.ok(Date.now() - start < 320_000, 'authentication exceeded its bounded deadline');
+}, 380_000);

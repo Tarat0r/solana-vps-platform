@@ -5,11 +5,13 @@ import * as path from 'node:path';
 import { connect, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { gatewayOrigin, gatewayPort, prepareNetwork } from './network.ts';
+import { gatewayOrigin, gatewayPort, prepareNetwork, vmHost, vmStateName } from './network.ts';
+import { stageFrontend } from './frontend.ts';
+import { clearPhoneForward, configurePhone, isLanTarget, monitorCommand, parsePhoneOptions, phoneForward, phoneGuestCommand, phoneOrigin, readPhoneProfile } from './phone.ts';
 
 export const root = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
-export const stateDir = path.join(root, '.vm');
-const runtime = `/tmp/solana-ssh-${process.getuid?.() ?? 'user'}-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
+export const stateDir = path.join(root, vmStateName);
+const runtime = `/tmp/solana-ssh-${process.getuid?.() ?? 'user'}-${createHash('sha256').update(root + vmStateName.slice(3)).digest('hex').slice(0, 12)}`;
 const serialPath = path.join(runtime, 'serial.sock');
 const qmpPath = path.join(runtime, 'qmp.sock');
 const image = path.resolve(root, '../tests/debian-13-nocloud-amd64.qcow2');
@@ -87,8 +89,9 @@ export class Console {
     const marker = 'DONE_' + randomBytes(12).toString('hex');
     this.socket.write(`${command}; _solana_status=$?; printf '\\n${marker}:%s\\n' "$_solana_status"\r`);
     const match = await this.expect(new RegExp(`([\\s\\S]*?)\\n${marker}:(\\d+)\\n`), timeoutMs);
-    if (match[2] !== '0') throw new Error(`Guest command failed (${match[2]}): ${match[1].slice(-4000)}`);
-    return match[1];
+    const [, output = '', status] = match;
+    if (status !== '0') throw new Error(`Guest command failed (${status}): ${output.slice(-4000)}`);
+    return output;
   }
 
   close() { this.socket.destroy(); }
@@ -110,6 +113,7 @@ async function up() {
     execFileSync('qemu-img', ['resize', overlay, '16G'], { stdio: 'inherit' });
   }
   const accel = fs.existsSync('/dev/kvm') ? 'kvm' : 'tcg';
+  const phone = readPhoneProfile(stateDir);
   const logfile = fs.openSync(path.join(stateDir, 'qemu.log'), 'a', 0o600);
   const vm = spawn('qemu-system-x86_64', [
     '-accel', accel, '-m', '2048', '-smp', '2',
@@ -117,7 +121,7 @@ async function up() {
     '-display', 'none', '-monitor', 'none',
     '-chardev', `socket,id=serial0,path=${serialPath},server=on,wait=off`, '-serial', 'chardev:serial0',
     '-qmp', `unix:${qmpPath},server=on,wait=off`,
-    '-netdev', `user,id=net0,hostfwd=tcp:127.0.0.2:2222-:22,hostfwd=tcp:127.0.0.2:${gatewayPort}-:8080,hostfwd=tcp:127.0.0.2:8899-:8899`,
+    '-netdev', `user,id=net0,hostfwd=tcp:${vmHost}:2222-:22,hostfwd=tcp:${vmHost}:${gatewayPort}-:8080,hostfwd=tcp:${vmHost}:8899-:8899${phone && isLanTarget(phone) ? ',hostfwd=' + phoneForward(phone) : ''}`,
     '-device', 'virtio-net-pci,netdev=net0',
     '-fsdev', `local,id=source,path=${root},security_model=none,readonly=on`, '-device', 'virtio-9p-pci,fsdev=source,mount_tag=source',
     '-no-reboot',
@@ -130,10 +134,12 @@ async function up() {
   const console = await Console.open();
   try { await console.login(); await console.command('mkdir -p /mnt/source; mountpoint -q /mnt/source || mount -t 9p -o trans=virtio,version=9p2000.L,ro source /mnt/source'); }
   finally { console.close(); }
-  globalThis.console.log(`VM ready for provisioning (${accel}); SSH will use ubuntu@127.0.0.2:2222`);
+  globalThis.console.log(`VM ready for provisioning (${accel}); SSH will use ubuntu@${vmHost}:2222`);
 }
 
 async function prepare() {
+  await clearPhoneForward(stateDir, qmpPath);
+  stageFrontend();
   await up();
   const bypassKey = path.join(stateDir, 'bypass_key');
   if (!fs.existsSync(bypassKey)) execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', bypassKey]);
@@ -150,7 +156,7 @@ async function prepare() {
     const keyOutput = await console.command('cat /etc/ssh/ssh_host_ed25519_key.pub');
     const hostKey = keyOutput.match(/ssh-ed25519 [A-Za-z0-9+/=]+/)?.[0];
     if (!hostKey) throw new Error('Missing guest host key');
-    fs.writeFileSync(path.join(stateDir, 'known_hosts'), `[127.0.0.2]:2222 ${hostKey}\n`, { mode: 0o600 });
+    fs.writeFileSync(path.join(stateDir, 'known_hosts'), `[${vmHost}]:2222 ${hostKey}\n`, { mode: 0o600 });
     fs.writeFileSync(path.join(stateDir, 'ready'), new Date().toISOString());
     globalThis.console.log('Guest build, Rust tests, SSH configuration and daemon readiness passed');
   } finally { console.close(); }
@@ -170,6 +176,46 @@ async function main() {
   switch (process.argv[2]) {
     case 'up': return up();
     case 'prepare': return prepare();
+    case 'phone': {
+      const args = process.argv.slice(3);
+      if (args[0] === '--off' && args.length !== 1) throw new Error('usage: npm run vm -- phone --off');
+      const options = args[0] === '--off' ? null : parsePhoneOptions(args, gatewayPort);
+      await up();
+      const terminal = await Console.open();
+      try {
+        await terminal.login();
+        if (!options) {
+          await terminal.command(phoneGuestCommand(null));
+          await clearPhoneForward(stateDir, qmpPath);
+          console.log('Phone mode disabled; signing URLs use the loopback gateway again. Test keypair retained.');
+        } else {
+          const profile = await configurePhone(root, stateDir, qmpPath, terminal, options);
+          console.log('Phone signing page: ' + phoneOrigin(profile));
+          if (!isLanTarget(profile)) console.log('Point the HTTPS tunnel for that origin at ' + gatewayOrigin + '; keep it running while testing.');
+          console.log((options.wallet ? 'Granted wallet: ' : 'Test wallet public address: ') + profile.wallet);
+          if (!options.wallet) console.log('Import key file: ' + path.join(stateDir, 'phone-wallet.private-key.txt'));
+          console.log(!isLanTarget(profile)
+            ? 'Start a new SSH login and scan its QR code on the phone.'
+            : profile.host === '127.0.0.1'
+              ? 'Start a new SSH login and open its link in this computer\'s browser with the wallet extension.'
+              : 'Start a new SSH login and scan its LAN QR code on a phone connected to the same Wi-Fi.');
+        }
+      } finally { terminal.close(); }
+      return;
+    }
+    case 'rpc-forward': {
+      // ../run.sh frees host port 8899 for a live validator, whose RPC binds all addresses.
+      const state = process.argv[3];
+      if (state !== 'on' && state !== 'off') throw new Error('usage: npm run vm -- rpc-forward on|off');
+      const removed = await monitorCommand(qmpPath, `hostfwd_remove net0 tcp:${vmHost}:8899`);
+      if (!/removed|not found/i.test(removed)) throw new Error('QEMU could not release the RPC forward: ' + removed.trim());
+      if (state === 'on') {
+        const added = await monitorCommand(qmpPath, `hostfwd_add net0 tcp:${vmHost}:8899-:8899`);
+        if (added.trim()) throw new Error('QEMU could not restore the RPC forward (is port 8899 busy?): ' + added.trim());
+      }
+      console.log(`VM RPC forward on ${vmHost}:8899 ${state === 'on' ? 'restored' : 'released'}`);
+      return;
+    }
     case 'stop':
       try { await stop(); }
       catch (error) {
@@ -180,7 +226,7 @@ async function main() {
       return;
     case 'reset':
       if (fs.existsSync(qmpPath)) { try { await stop(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED' && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
-      for (const file of ['debian-overlay.qcow2', 'ready', 'known_hosts', 'qemu.pid']) fs.rmSync(path.join(stateDir, file), { force: true });
+      for (const file of ['debian-overlay.qcow2', 'ready', 'known_hosts', 'qemu.pid', 'phone.json']) fs.rmSync(path.join(stateDir, file), { force: true });
       console.log('Disposable VM state reset; base image preserved'); return;
     case 'exec': {
       const terminal = await Console.open();
@@ -197,7 +243,7 @@ async function main() {
       process.stdin.on('data', data => { if (data.includes(0x1d)) socket.destroy(); });
       socket.write('\r'); return;
     }
-    default: throw new Error('usage: npm run vm -- up|prepare|exec COMMAND|console|stop|reset');
+    default: throw new Error('usage: npm run vm -- up|prepare|phone (--host LAN_IP|127.0.0.1 [--port PORT] | --origin https://HOST) [--wallet ADDRESS]|phone --off|rpc-forward on|off|exec COMMAND|console|stop|reset');
   }
 }
 

@@ -6,6 +6,7 @@ After=network.target
 ExecStart=/usr/local/sbin/solana-test-services serve
 EnvironmentFile=/etc/solana-auth/test.env
 Environment=SOLANA_TEST_BIND=0.0.0.0
+Environment=SOLANA_TEST_FRONTEND_DIR=/opt/solana-frontend
 Restart=on-failure
 User=root
 NoNewPrivileges=yes

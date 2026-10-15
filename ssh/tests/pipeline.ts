@@ -34,17 +34,24 @@ if (args.includes('--help')) {
 }
 
 async function main() {
-  const [major, minor] = process.versions.node.split('.').map(Number);
+  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
   if (major < 22 || (major === 22 && minor < 18)) throw new Error('Node.js 22.18 or later is required');
   const image = path.resolve(root, '../tests/debian-13-nocloud-amd64.qcow2');
   if (!fs.existsSync(image)) throw new Error(`Missing supplied Debian image: ${image}`);
-  for (const command of ['cargo', 'npm', 'qemu-system-x86_64', 'qemu-img', 'ssh', 'ssh-keygen', 'bash']) {
+  for (const command of ['cargo', 'npm', 'qemu-system-x86_64', 'qemu-img', 'ssh', 'ssh-keygen', 'bash', 'script']) {
     const check = spawnSync('bash', ['-c', 'command -v -- "$1" >/dev/null', 'pipeline-preflight', command], { cwd: root });
     if (check.error || check.status !== 0) throw new Error(`Required executable is unavailable: ${command}`);
   }
 
   const stages: Stage[] = [
     { name: 'Install locked Node dependencies', command: 'npm', args: ['ci', '--ignore-scripts', '--no-audit', '--no-fund'] },
+    { name: 'Install locked frontend dependencies', command: 'npm', args: ['--prefix', '../frontend', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'] },
+    { name: 'Build and type-check the signing frontend', command: 'npm', args: ['--prefix', '../frontend', 'run', 'build'] },
+    { name: 'Test challenge validation and wallet proofs', command: 'npm', args: ['--prefix', '../frontend', 'test'] },
+    { name: 'Check backend Rust formatting', command: 'cargo', args: ['fmt', '--manifest-path', '../backend/Cargo.toml', '--', '--check'] },
+    { name: 'Lint the Axum backend', command: 'cargo', args: ['clippy', '--manifest-path', '../backend/Cargo.toml', '--locked', '--all-targets', '--', '-D', 'warnings'] },
+    { name: 'Test the production gateway contract', command: 'cargo', args: ['test', '--manifest-path', '../backend/Cargo.toml', '--locked'] },
+    { name: 'Test the signing page in Chromium', command: 'npm', args: ['--prefix', '../frontend', 'run', 'test:browser'] },
     { name: 'Check Rust formatting', command: 'cargo', args: ['fmt', '--all', '--', '--check'] },
     { name: 'Check Rust with Clippy', command: 'cargo', args: ['clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings'] },
     { name: 'Build host binaries and PAM module', command: 'cargo', args: ['build', '--locked', '--workspace'] },

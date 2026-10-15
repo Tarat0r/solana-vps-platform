@@ -7,8 +7,14 @@ See [CONTRACTS.md](CONTRACTS.md) for wire formats.
 
 The gateway and RPC in the test environment are **synthetic fixtures**. No program
 is deployed, no SOL is transferred, and there is no browser wallet page. Account
-encoding is provisional pending integration with the program owner. The daemon
-has no fixture authorization bypass.
+encoding remains provisional until integration with a compatible deployed
+program. The daemon has no fixture authorization bypass.
+
+The [reduced project architecture](../Architecture.md) keeps this implementation
+as its core. The Axum gateway and browser signing page are implemented. The compatible Solana
+program, owner dashboard, and real-wallet HTTPS/devnet integration remain planned. Provider setup uses a simple
+operator-run Bash script; the existing local VM preparation and test pipeline remain
+unchanged. See the [solo-developer roadmap](../Architecture.md#solo-developer-roadmap).
 
 ## Authentication flow
 
@@ -35,8 +41,9 @@ signer in place of a browser wallet.
 
 ## Prerequisites and checks
 
-- Linux, QEMU (`qemu-system-x86_64`, `qemu-img`), OpenSSH client and `ssh-keygen`.
+- Linux, util-linux `script` (for the interactive terminal check), QEMU (`qemu-system-x86_64`, `qemu-img`), OpenSSH client and `ssh-keygen`.
 - Rust/Cargo 1.85+ and PAM development headers for host checks/signing tools.
+- Chromium (or Playwright Chromium) for the frontend browser checks.
 - Node.js 22.18+ and npm. Tests and VM management use TypeScript; no Python scripts
   or Docker are required.
 - Supplied image at `../tests/debian-13-nocloud-amd64.qcow2`.
@@ -53,7 +60,10 @@ npm run test:all
 ```
 
 From the repository root, the equivalent command is
-`npm --prefix ssh run test:all`. The runner is
+`npm --prefix ssh run test:all`. Stage 8 includes the owner dashboard browser
+tests, which load the billing program into a local validator: build it first
+with `npm --prefix programs ci && npm --prefix programs run compile`, or run
+`./test-all.sh` from the root, which does that and then runs this pipeline. The runner is
 [tests/pipeline.ts](tests/pipeline.ts), uses Node's built-in TypeScript support,
 and installs its locked npm dependencies automatically; no separate `npm ci` is
 needed for this command.
@@ -62,19 +72,19 @@ The pipeline executes these stages in order and stops at the first failure:
 
 | Stage | Check or action |
 | --- | --- |
-| 1 | Install Node development dependencies with `npm ci --ignore-scripts`. |
-| 2 | Check Rust formatting without rewriting source files. |
-| 3 | Run workspace Clippy, including test targets, with warnings treated as errors. |
-| 4 | Build host binaries, including the test wallet signer and PAM library. |
-| 5 | Run all Rust unit tests and documentation tests. |
-| 6 | Type-check the TypeScript runners, fixtures and SSH tests. |
-| 7 | Stop this project's managed VM, check SSH/RPC ports, and select/save a free gateway port. |
-| 8 | Run network regression tests and gateway contract tests with a temporary host fixture service. |
-| 9 | Boot/provision Debian; build, test, format-check and lint Rust inside the guest. |
-| 10 | Run the full SSH end-to-end suite against `127.0.0.2:2222`. |
+| 1–2 | Install locked SSH test and frontend Node dependencies. |
+| 3–4 | Build/type-check the frontend and test canonical challenges and wallet proofs. |
+| 5–7 | Check backend Rust formatting, Clippy, and Axum gateway contract tests. |
+| 8 | Run browser signing and dashboard tests against Axum with Chromium. |
+| 9–12 | Check SSH workspace formatting/Clippy; build and run Rust tests. |
+| 13 | Type-check TypeScript VM and SSH tests. |
+| 14 | Stop this project's managed VM, check ports, and select/save the gateway port. |
+| 15 | Run network regression, phone-mode, and fixture gateway contract tests. |
+| 16 | Build/stage the frontend, boot/provision Debian, and run guest Rust checks. |
+| 17 | Run the real OpenSSH end-to-end suite at `127.0.0.2:2222`. |
 
 The gateway tests and VM share the selected gateway port and `127.0.0.2:8899`,
-so stage 7 also closes existing SSH/serial sessions to this test VM. The runner
+so stage 14 also closes existing SSH/serial sessions to this test VM. The runner
 does not stop unrelated processes or delete/reset the overlay. It reuses the
 guest filesystem and Cargo cache, and preserves the supplied base image.
 
@@ -102,7 +112,7 @@ npm run test:all
 ```
 
 An explicit `SOLANA_SSH_GATEWAY_PORT` takes precedence over the saved port. If it
-is occupied, the pipeline fails at stage 7 with the address and a recovery hint;
+is occupied, the pipeline fails at stage 14 with the address and a recovery hint;
 it does not silently choose a different port. Unset the variable to enable automatic
 selection again. The selected port applies to the host fixture listener, QEMU
 forwarding, public signing origin and signing helper together. The guest daemon
@@ -111,7 +121,7 @@ Changing the port of an already-running VM requires stopping and preparing it
 again; the full pipeline does this automatically. Standalone VM startup also
 selects and saves its gateway port.
 
-The SSH suite takes roughly two minutes with KVM, including a real 90-second
+The SSH suite takes roughly six minutes with KVM, including a real 5-minute
 expiry test. Cold runs take longer to download packages and compile both host and
 guest dependencies; TCG is slower. Network access is required for npm, Cargo and
 Debian packages, and the runner needs permission to use loopback and Unix sockets.
@@ -130,11 +140,16 @@ cases, so the count is smaller than the number of authentication attempts.
 | Layer | Tests | What it establishes |
 | --- | ---: | --- |
 | Rust `auth-core` | 4 | Canonical signed bytes, strict signature/server/account binding, expiry and clock rollback, field-injection rejection, owner/delegate rules, account encoding and freshness boundaries. |
-| Rust `pam-solana` | 2 | Invalid PAM handles fail closed; incomplete or oversized daemon responses are rejected. |
-| Rust `solana-authd` | 4 | Secure configuration defaults, RPC metadata rejection, bounded IPC parsing and single-use/monotonic session expiry. |
+| Rust `pam-solana` | 4 | Invalid PAM handles and malformed frames fail closed; challenges outside the 5-minute window are refused; terminal QR output decodes to the exact signing URL. |
+| Rust `solana-authd` | 5 | Secure configuration defaults, opt-in private-LAN test origins, RPC metadata rejection, bounded IPC parsing and single-use/monotonic session expiry. |
+| Rust `test-services` | 3 | Optional phone-wallet grant follows delegated-access scenarios; canonical test origins; private, verified Solana keypair files that are never paired with a stale import file. |
 | TypeScript network regression | 3 | Automatic fallback when a wildcard listener occupies the preferred port, explicit override behavior, and saved-port reuse and validation. |
-| TypeScript gateway contracts | 3 | Publication/retrieval, protected daemon operations, duplicate IDs/proofs, expiry, deletion and authenticated fixture controls. |
-| TypeScript Debian/OpenSSH | 28 | Actual SSH authentication through the installed PAM module and daemon, including authorization, lifecycle failures and recovery. |
+| TypeScript phone mode | 8 | Private-LAN and exact HTTPS-origin validation, existing wallet addresses, saved profiles and guest configuration, QMP forwarding, switching between modes, rollback after failures, and occupied ports. |
+| Axum backend | 4 | Session contract, authentication, content negotiation, the exact 5-minute lifetime boundary, expiry, and resource limits. |
+| Frontend protocol/wallet tests | 4 | Original signed bytes, binding validation, legacy 90-second challenges, mobile handoff, extension availability by origin, and valid Ed25519 proofs. |
+| Chromium browser tests | 15 | Phantom/Solflare signing, unified wallet connection and picker, wallet disconnect/account switch, countdown, submitted-after-expiry state, failure states, phone layout/links, retry, and production assets/CSP. |
+| TypeScript gateway contracts | 4 | Publication/retrieval, protected daemon operations, duplicate IDs/proofs, the 5-minute lifetime boundary, expiry, deletion and authenticated fixture controls. |
+| TypeScript Debian/OpenSSH | 30 | Actual SSH authentication through the installed PAM module and daemon, including authorization, phone mode with an HTTPS origin, lifecycle failures and recovery. |
 
 Rust tests live beside the implementation in `auth-core/src`, `pam/src` and
 `solana-authd/src`. They run on the host and again with Debian's compiler and PAM
@@ -175,7 +190,8 @@ Coverage includes:
   authorized key), unprivileged Unix-socket peers and invalid IPC versions.
 - Disconnects both at the signing prompt and while awaiting approval; daemon restart
   invalidating pending attempts; gateway/daemon outages and independent root-console recovery.
-- An unsigned login expiring at the real 90-second deadline, with a bounded completion time.
+- An unsigned login expiring at the real 5-minute deadline, with a bounded completion time.
+- Phone mode: a challenge bound to an HTTPS phone origin, signed by the granted phone wallet, then denied after delegate revocation.
 
 The suite changes fixture scenarios and stops/restarts guest services, so run it
 against the disposable test VM. It restores the normal fixture scenario/services
@@ -252,15 +268,85 @@ Recovery can restart the daemon or restore `/etc/pam.d/sshd.before-solana`.
 the original image. `stop` preserves the overlay. Private control sockets live in
 `/tmp` to accommodate long Unicode workspace paths.
 
+The test suites use VM instance 1. `SOLANA_VM_INSTANCE=N` (2–9) runs another,
+independent VM for `../run.sh`: it keeps its state in `.vm-N/` and listens on
+`127.0.0.(N+1)` instead of `127.0.0.2`, with the same ports. For example,
+`SOLANA_VM_INSTANCE=2 npm run vm -- stop` stops the second server's VM. Only
+instance 1 runs the test services' public signing origin correctly; other
+instances are meant for `run.sh`, which replaces their daemon configuration.
+`npm run vm -- rpc-forward off|on` releases or restores an instance's host RPC
+forward, so a live validator can use port 8899.
+
 Host SSH `127.0.0.2:2222` forwards to guest port 22. Gateway/RPC forwards use host
 `127.0.0.2:<selected-gateway-port>` and `:8899`; the guest daemon uses
 `127.0.0.1:8080` and `:8899`. Read `.vm/network.json` or the pipeline output for
 the selected port. `SOLANA_SSH_GATEWAY_PORT` overrides it and the public signing URL.
 The signing origin is bound into the challenge separately from the transport URL.
 
-Test signing URLs return exact challenge JSON. For a manual terminal login, run
+Test signing URLs serve the browser page for HTML requests and retain exact challenge JSON for API clients. The SSH prompt includes a QR code for the same URL; use a dark terminal background when scanning it. For a manual terminal login, run
 `target/debug/test-services sign '<displayed-url>' owner` in another terminal,
 then press Enter in SSH. Use `delegate` for the other public fixture wallet.
+
+### Phone mode
+
+To sign a VM login from a real phone on the same Wi-Fi, expose the signing page
+on this computer's private LAN address (find it with `ip -4 addr`):
+
+```sh
+npm run vm -- phone --host 192.168.1.9 [--port 18080]
+```
+
+This requires a VM prepared with the current harness and the host
+`target/debug/test-services` build. It forwards `<host>:<port>` to the guest
+gateway, switches the challenge `auth_origin` to that plain-HTTP LAN origin, and
+grants a generated test wallet delegated access in the fixture RPC. The keypair is
+kept in `.vm/phone-wallet.json`; import `.vm/phone-wallet.private-key.txt` into a
+**test-only** wallet account. Then start a new SSH login, scan its QR code, sign
+in the wallet's browser, and press Enter in SSH. `--port` defaults to the selected
+gateway port; choose another if it is taken on the LAN address.
+
+To use an existing wallet account instead, such as a fresh Phantom account, add
+`--wallet <its public address>`; no private key is generated or transferred. A seed
+phrase cannot be derived from a private key, so import the generated key with the
+wallet's **Import Private Key** option, or use `--wallet`. Only the most recently
+configured phone wallet has access.
+
+LAN HTTP is accepted only with `local_test` on `localnet` and only for private
+IPv4 origins; other hosts on the network can reach the page while phone mode is
+enabled.
+
+Phantom injects its provider only into HTTPS pages and pages served from exactly
+`localhost` or `127.0.0.1`, so it is unavailable on the default `127.0.0.2` and LAN
+links. To sign with a desktop browser extension, use the same command with
+`--host 127.0.0.1`; that origin needs no LAN HTTP exception.
+
+On Android, `adb reverse` makes the phone's own `127.0.0.1` reach this computer,
+over USB or wireless debugging, with no firewall change. Keep `--host 127.0.0.1`
+and run:
+
+```sh
+adb reverse tcp:18080 tcp:18080   # after adb pair/connect for wireless debugging
+```
+
+Solflare's in-app browser signs on that plain-HTTP origin. Phantom's mobile
+in-app browser refuses plain-HTTP local pages (it reports NXDOMAIN), even on
+`127.0.0.1`. For Phantom on a phone, or any iPhone, use a trusted HTTPS tunnel to
+the VM's loopback gateway; the phone then needs no Wi-Fi or firewall access to
+this computer:
+
+```sh
+cloudflared tunnel --url http://127.0.0.2:<selected-gateway-port>   # prints https://<name>.trycloudflare.com
+npm run vm -- phone --origin https://<name>.trycloudflare.com
+```
+
+The origin must be exact (no path or trailing slash) and is bound into each
+challenge, so rerun the second command whenever the tunnel URL changes. The test
+gateway is publicly reachable while the tunnel runs; its test controls still
+require the private token. Stop the tunnel when finished.
+
+Disable phone mode with `npm run vm -- phone --off` (the keypair is retained).
+`npm run vm -- prepare` and `reset` also disable it, and phone mode cannot be
+enabled while a pipeline is running.
 
 ## Results and troubleshooting
 
@@ -276,6 +362,7 @@ Generated artifacts are ignored under `.vm/`:
 | `qemu.log` | QEMU startup/device errors. |
 | `debian-overlay.qcow2` | Reusable guest changes and build cache; the base image remains separate. |
 | `known_hosts`, `ready` | Pinned guest host key and successful preparation marker. |
+| `phone.json`, `phone-wallet.json`, `phone-wallet.private-key.txt` | Active phone-mode profile and its private test keypair (0600); never reuse it for real funds. |
 | `secrets.json`, `bypass_key` | Private, disposable test credentials; never publish these. |
 
 Use the pipeline's overall status to assess the full run. A failure before the SSH

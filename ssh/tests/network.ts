@@ -3,7 +3,13 @@ import * as path from 'node:path';
 import { createServer, type AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
-const networkFile = fileURLToPath(new URL('../.vm/network.json', import.meta.url));
+// ../run.sh starts extra VMs with SOLANA_VM_INSTANCE=2, 3, …; each gets its own
+// state directory and loopback address. The test suites use instance 1.
+const instance = Number(process.env.SOLANA_VM_INSTANCE ?? '1');
+if (!Number.isInteger(instance) || instance < 1 || instance > 9) throw new Error('SOLANA_VM_INSTANCE must be an integer from 1 to 9');
+export const vmHost = `127.0.0.${instance + 1}`;
+export const vmStateName = instance === 1 ? '.vm' : `.vm-${instance}`;
+const networkFile = fileURLToPath(new URL(`../${vmStateName}/network.json`, import.meta.url));
 
 function validatePort(value: unknown): number {
   const port = Number(value);
@@ -29,11 +35,11 @@ export function saveGatewayPort(port: number, file = networkFile) {
 }
 
 export let gatewayPort = resolveGatewayPort(process.env.SOLANA_SSH_GATEWAY_PORT);
-export let gatewayOrigin = `http://127.0.0.2:${gatewayPort}`;
+export let gatewayOrigin = `http://${vmHost}:${gatewayPort}`;
 
 async function probePort(port: number): Promise<number> {
   const server = createServer();
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.2', resolve); });
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, vmHost, resolve); });
   const selected = (server.address() as AddressInfo).port;
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   return selected;
@@ -43,7 +49,7 @@ function occupiedPort(port: number, cause: unknown): Error {
   const hint = [2222, 8899].includes(port)
     ? 'This SSH/RPC port is fixed; stop its listener before retrying.'
     : 'Unset SOLANA_SSH_GATEWAY_PORT and run npm run test:all to choose a free port, or set it to a free port.';
-  return new Error(`127.0.0.2:${port} is already in use. Stop the managed VM if running (npm run vm -- stop --if-running). ${hint}`, { cause });
+  return new Error(`${vmHost}:${port} is already in use. Stop the managed VM if running (npm run vm -- stop --if-running). ${hint}`, { cause });
 }
 
 export async function assertPortFree(port: number) {
@@ -69,6 +75,6 @@ export async function prepareNetwork() {
   const selected = await selectGatewayPort(gatewayPort, process.env.SOLANA_SSH_GATEWAY_PORT !== undefined);
   saveGatewayPort(selected);
   gatewayPort = selected;
-  gatewayOrigin = `http://127.0.0.2:${selected}`;
+  gatewayOrigin = `http://${vmHost}:${selected}`;
   process.env.SOLANA_SSH_GATEWAY_PORT = String(selected);
 }

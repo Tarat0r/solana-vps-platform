@@ -16,9 +16,13 @@ root_partition=$(cat "/sys/class/block/$(basename "$root_device")/partition")
 growpart "$root_disk" "$root_partition" || test "$(lsblk -b -n -o SIZE "$root_device")" -gt 10000000000
 resize2fs "$root_device"
 apt-get install -y -q openssh-server libpam0g-dev pkg-config build-essential cargo rustc rustfmt rust-clippy ca-certificates curl socat
-install -d /opt/solana-ssh
-tar -C /mnt/source --exclude=./target --exclude=./.vm --exclude=./.cache --exclude=./node_modules -cf - . | tar -C /opt/solana-ssh -xf -
-cd /opt/solana-ssh
+install -d /opt/solana-vps/ssh /opt/solana-vps/backend /opt/solana-frontend
+tar -C /mnt/source --exclude=./target --exclude='./.vm*' --exclude=./.cache --exclude=./node_modules -cf - . | tar -C /opt/solana-vps/ssh -xf -
+cp -a /mnt/source/.cache/backend/. /opt/solana-vps/backend/
+cp -a /mnt/source/.cache/frontend/. /opt/solana-frontend/
+# Clippy reads the repository's settings from a parent directory, as on the host.
+cp /mnt/source/.cache/clippy.toml /opt/solana-vps/
+cd /opt/solana-vps/ssh
 export CARGO_BUILD_JOBS=2
 printf 'Building Rust components inside Debian\n'
 cargo build --locked --workspace
@@ -29,6 +33,7 @@ install -m 755 target/debug/solana-authd /usr/local/sbin/solana-authd
 install -m 755 target/debug/test-services /usr/local/sbin/solana-test-services
 install -m 755 target/debug/libpam_solana.so /usr/lib/x86_64-linux-gnu/security/pam_solana.so
 set -a
+# shellcheck source=/dev/null  # Written in the guest by the VM setup.
 source /etc/solana-auth/test.env
 set +a
 solana-test-services config > /etc/solana-auth/server.toml
@@ -53,16 +58,19 @@ install -d /run/sshd
 sshd -t
 sshd -T -C user=ubuntu,host=localhost,addr=127.0.0.1 | grep -E '^(usepam|authenticationmethods|passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication|permitrootlogin) '
 systemctl daemon-reload
+# Release the guest ports that ../run.sh forwards to a live validator and gateway.
+systemctl stop solana-live-rpc solana-live-gateway 2>/dev/null || true
 systemctl enable --now solana-test-services
 systemctl restart solana-test-services
 systemctl enable --now solana-authd
 systemctl restart solana-authd
 systemctl enable --now ssh
 systemctl restart ssh
-for attempt in $(seq 1 30); do
+for _ in $(seq 1 30); do
     if test -S /run/solana-authd.sock; then break; fi
     sleep 1
 done
 test -S /run/solana-authd.sock
 curl -fsS -H "Authorization: Bearer $SOLANA_TEST_TOKEN" http://127.0.0.1:8080/_test/status >/dev/null
+touch /etc/solana-auth/phone-ready
 printf 'SOLANA_VM_PROVISIONED\n'
