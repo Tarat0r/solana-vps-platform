@@ -1,0 +1,22 @@
+{
+  "cluster": "localnet",
+  "rpc_url": "http://127.0.0.1:38899",
+  "program_id": "FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY",
+  "provider_pubkey": "7LyztUYYUCeNUpKNJScdMoSWiU3DX8qWhUtBM7q8ytux",
+  "servers": [
+    {
+      "name": "Server 1",
+      "server_id": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "unix_user": "ubuntu",
+      "ssh_host": "127.0.0.2",
+      "ssh_port": 2222
+    },
+    {
+      "name": "Server 2",
+      "server_id": "f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3",
+      "unix_user": "ubuntu",
+      "ssh_host": "127.0.0.3",
+      "ssh_port": 2222
+    }
+  ]
+}
