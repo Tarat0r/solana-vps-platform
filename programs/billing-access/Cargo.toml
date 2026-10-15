@@ -1,0 +1,43 @@
+[package]
+name = "billing-access"
+version = "0.1.0"
+description = "Native SOL billing and SSH access grants"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "billing_access"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = { version = "1.2.1", features = ["init-if-needed"] }
+
+[dev-dependencies]
+auth-core = { path = "../../ssh/auth-core" }
+base64 = "0.22"
+bincode = "1"
+litesvm = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+sha2 = "0.10"
+solana-authd = { path = "../../ssh/solana-authd" }
+solana-hash = { version = "4", features = ["decode"] }
+solana-keypair = "3"
+solana-signer = "3"
+solana-transaction = { version = "4", features = ["serde"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time"] }
+
+[lints]
+workspace = true

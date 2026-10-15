@@ -1,0 +1,39 @@
+[workspace]
+members = ["billing-access"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+
+# Lint levels for every crate; ./static-analysis.sh runs Clippy with -D warnings.
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+# Anchor's macros emit cfgs Cargo does not declare.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+# A panic in the PAM module or daemon aborts a login; unwrap and expect are for tests (clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+# Expiry times are i64 on chain and u64/usize locally.
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+dbg_macro = "warn"
+todo = "warn"
+# Lamport and timestamp math on chain must be checked.
+arithmetic_side_effects = "warn"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1

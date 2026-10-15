@@ -1,0 +1,27 @@
+{
+  "name": "solana-billing-access",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "compile": "anchor build --arch v0",
+    "build": "npm run compile && cp target/idl/billing_access.json ../shared/billing-access/",
+    "typecheck": "tsc --noEmit",
+    "radar": "scripts/radar.sh",
+    "test": "cargo test",
+    "test:provider": "node --experimental-strip-types --test tests/provider.test.ts",
+    "test:daemon": "cargo test --test daemon_rpc -- --ignored",
+    "test:all": "npm run compile && npm run typecheck && npm test && npm run test:provider && npm run test:daemon"
+  },
+  "dependencies": {
+    "@solana/kit": "^8.5.0",
+    "@solana/kit-plugin-rpc": "^0.19.0",
+    "@solana/kit-plugin-signer": "^0.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~5.9.3"
+  }
+}

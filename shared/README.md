@@ -1,15 +1,16 @@
 # Shared interfaces
 
-**Leads:** Vassil, Anurag, and Bala
+**Status:** authentication contracts and Rust types exist under `ssh/`; the billing/access [IDL](billing-access/billing_access.json) is published here. Browser helpers and real integration fixtures are planned. Keep this folder for those additions rather than duplicating the working protocol.
 
-Agree on these contracts before connecting the implementations. This folder will hold interface definitions, client helpers, and non-secret fixtures as they are created.
+| Interface | Compatibility baseline / remaining work |
+| --- | --- |
+| PAM/daemon IPC | [Contract v1](../ssh/CONTRACTS.md) and [protocol types](../ssh/auth-core/src/protocol.rs): preserve version, frames, account binding, cancellation, and fail-closed decisions |
+| Gateway/browser/daemon | Same contract: exact challenge bytes, signature encoding, session endpoints, expiry, and daemon authentication |
+| On-chain authorization | [Rust account definitions](../ssh/auth-core/src/accounts.rs): preserve layouts, discriminators, PDA seeds, bumps, roles, and validation |
+| Program/dashboard/provider Bash script | [IDL](billing-access/billing_access.json) with program ID, instructions, account/receipt layouts, and errors; regenerate with `npm --prefix programs run build`. The dashboard's client ([frontend/src/billing.ts](../frontend/src/billing.ts)) is tested against this IDL |
+| Payment recovery | Preserve payment ID and pending transaction metadata; verify finalized receipts and access state before displaying success or retrying an uncertain operation |
+| Deployment identity | Non-secret cluster/program/provider/server ID and SSH connection details; daemon tokens and provider/wallet keys are never frontend configuration |
 
-| Contract | Lead | Define first |
-| --- | --- | --- |
-| Solana program/client | Bala | Cluster/program ID, account layouts, PDA seed encodings, instructions, errors, and payment fixtures |
-| Authentication | Vassil, with Anurag | Exact challenge bytes, wallet signature encoding, expiry, gateway publish/fetch/submit/poll payloads, and daemon authentication |
-| PAM/daemon IPC | Vassil | Request/response format, Linux account binding, timeouts, cancellation, and result codes |
-| Orders/payments | Anurag, with Vassil | API payloads, SQLite states, payment IDs, reconciliation, and retry behavior |
-| VM preparation | Vassil, with Anurag | Server configuration, reachable endpoints, idempotent preparation, readiness, and failure results |
+The program and gateway must fit the existing authentication contract. There are no order/database or backend-to-VM provisioning interfaces in the reduced product.
 
-See [Architecture.md](../Architecture.md).
+See [Architecture.md](../Architecture.md) for scope and the sequential roadmap.

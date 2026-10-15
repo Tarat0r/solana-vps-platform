@@ -1,0 +1,22 @@
+[toolchain]
+anchor_version = "1.2.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+billing_access = "FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY"
+
+[programs.devnet]
+billing_access = "FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY"
+
+[workspace]
+members = ["billing-access"]
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test"
