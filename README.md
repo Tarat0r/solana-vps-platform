@@ -62,6 +62,14 @@ To build and run the whole system for manual testing with a browser wallet (Dock
 
 It starts `solana-test-validator` with the program, registers two servers for sale, and airdrops 10 SOL to each `--fund` wallet. Without `--fund`, it funds the keypair in `.run/owner.json`. It also runs the gateway and frontend in Docker at `http://127.0.0.1:3000`. Each server has its own Debian VM, whose daemon it points at that server, the validator, and the gateway: server 1 is `ssh -p 2222 ubuntu@127.0.0.2`, server 2 is `ssh -p 2222 ubuntu@127.0.0.3`. The two VMs use about 4 GB of memory together. Set your wallet to localnet (`http://127.0.0.1:8899`), pick a server and buy access in the dashboard, then SSH to that server and approve its signing link. Any wallet can buy a server; once the buyer's subscription expires it is for sale again. The chain restarts empty on every run.
 
+To run the same setup against Solana devnet:
+
+```sh
+./run.sh --devnet --fund <wallet address>    # FUND_SOL (default 1) per wallet, sent from the provider key
+```
+
+The first run creates the provider key in `.run/devnet/` and stops with its address: fund it with about 3 SOL at [faucet.solana.com](https://faucet.solana.com) and rerun. It deploys the program with that key, which becomes the upgrade authority, and registers two servers for 0.01 SOL: server 1 for 30 days and server 2 for 10 minutes, to show expiry and renewal. Devnet keeps its state, so later runs skip the deployment and registrations unless the program build changed. The VMs' daemons read devnet through `https://api.devnet.solana.com` (set `RPC_URL` for another HTTPS RPC), and the gateway stays on loopback HTTP: `local_test` allows that on devnet, so sign with a desktop wallet extension, not a phone. Set your wallet to devnet (Phantom: Settings → Developer Settings → Testnet Mode; Solflare: Settings → Network). Stop it with `./run.sh down`.
+
 To run only the gateway and frontend in Docker, see [Run with Docker](backend/README.md#run-with-docker).
 
 The eventual integrated demonstration uses Solana devnet and one existing Debian VM. The current fixture suite uses `localnet`. Expiry and revocation affect new logins; established SSH sessions remain open.
