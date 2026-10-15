@@ -1,0 +1,13 @@
+# The gateway image needs only the backend, the frontend, and ssh/auth-core.
+*
+!backend
+!frontend
+!ssh/Cargo.toml
+!ssh/Cargo.lock
+!ssh/auth-core
+**/target
+**/node_modules
+**/dist
+**/test-results
+**/playwright-report
+backend/dashboard.json

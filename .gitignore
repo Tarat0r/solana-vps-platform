@@ -1,0 +1,4 @@
+# Holds SOLANA_GATEWAY_TOKEN for compose.yaml.
+/.env
+# Local state from ./run.sh: validator ledger, provider key, gateway token.
+/.run/

@@ -1,0 +1,32 @@
+# Dependency policy for ./static-analysis.sh, shared by the backend/, ssh/, and
+# programs/ lockfiles: cargo deny --manifest-path <workspace>/Cargo.toml check --config deny.toml
+
+[advisories]
+# Every advisory fails the check unless listed here with its reason.
+ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is unmaintained, not vulnerable; anchor-lang and solana-account need it for Solana's wire format." },
+    { id = "RUSTSEC-2024-0388", reason = "derivative is unmaintained, not vulnerable; pulled in by the ark-* crypto crates under solana-program." },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, not vulnerable; pulled in by the ark-* crypto crates under solana-program." },
+    { id = "RUSTSEC-2025-0161", reason = "libsecp256k1 is unmaintained, not vulnerable; solana-syscalls pulls it in for the secp256k1 syscall." },
+    { id = "RUSTSEC-2021-0139", reason = "ansi_term is unmaintained, not vulnerable; only LiteSVM, a test dependency, uses it." },
+]
+# This file serves three lockfiles, so each uses only some of these entries.
+unused-ignored-advisory = "allow"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "CDLA-Permissive-2.0"]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+# The repository's own crates are not published.
+private = { ignore = true }
+
+[bans]
+# The Solana and Anchor trees pull in many duplicate versions; only wildcards are banned.
+multiple-versions = "allow"
+wildcards = "deny"
+# Path dependencies between the repository's own unpublished crates.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

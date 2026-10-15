@@ -1,0 +1,3 @@
+# Clippy settings for every Rust workspace; lint levels are in each Cargo.toml.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

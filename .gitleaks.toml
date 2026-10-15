@@ -1,0 +1,8 @@
+# Secret scanning for ./static-analysis.sh: gitleaks's default rules, minus
+# public values that look like keys.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Anchor.toml maps program names to public program IDs; its wallet is a file path."
+paths = ['''^programs/Anchor\.toml$''']
