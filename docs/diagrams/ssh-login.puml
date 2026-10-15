@@ -1,57 +1,65 @@
 @startuml
-hide footbox
-skinparam shadowing false
-skinparam sequenceMessageAlign center
+title Wallet-authenticated SSH: preserved flow with planned browser integration
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam responseMessageBelowArrow true
 skinparam maxMessageSize 220
+hide footbox
 
 actor User
-participant "SSH\nOpenSSH + PAM" as SSH
-participant "solana-authd" as AuthD
-participant "Auth Gateway" as Gateway
-participant "Browser\n+ Wallet" as Wallet
+participant "OpenSSH + PAM\n(implemented)" as SSH
+participant "solana-authd\n(implemented)" as AuthD
+participant "Auth gateway\n(production planned)" as Gateway
+participant "Browser + wallet\n(planned)" as Wallet
 participant "Solana RPC" as RPC
 
-group 1. Start SSH login
-  User -> SSH : ssh ubuntu@<target>
-  SSH -> AuthD : Authenticate ubuntu
-  AuthD -> AuthD : Create challenge + 90-second session
-  AuthD -> Gateway : Publish exact challenge
-  Gateway --> AuthD : Login URL
-  AuthD --> SSH : Login URL
-  SSH --> User : Open URL to authenticate
+group Start one connection-bound login
+  User -> SSH : ssh ubuntu@<server>
+  SSH -> AuthD : PAM IPC: start(version=1, unix_user)
+  AuthD -> AuthD : Generate exact challenge; 5-minute lifetime
+  AuthD -> Gateway : POST /v1/sessions (bearer token)
+  Gateway --> AuthD : 201 Created
+  AuthD --> SSH : challenge: URL + expires_at
+  SSH --> User : Open signing URL; press Enter after signing
 end
 
-group 2. Sign the wallet challenge
-  User -> Wallet : Open URL and approve signing
-  Wallet -> Gateway : Fetch challenge
-  Gateway --> Wallet : Exact challenge bytes
-  Wallet -> Wallet : Sign locally with wallet key
-  Wallet -> Gateway : Wallet public key + signature
-  AuthD -> Gateway : Poll for signed response
-  Gateway --> AuthD : Wallet public key + signature
+group Wallet message signature
+  User -> Wallet : Open /v1/sessions/{id}
+  Wallet -> Gateway : Fetch exact published challenge
+  Gateway --> Wallet : challenge_base64 + session_id + expires_at
+  Wallet -> Wallet : Decode bytes; display server/account;\nsign with Phantom / Solflare
+  Wallet -> Gateway : POST response {wallet, signature_base64}
+  Gateway --> Wallet : 202 Accepted (submission only)
+  User -> SSH : Return to SSH and press Enter
+  SSH -> AuthD : PAM IPC: wait(version=1)
+  AuthD -> Gateway : GET response (bearer token)
+  Gateway --> AuthD : Proof, or 204 while pending
 end
 
-group 3. Verify identity and access
-  AuthD -> AuthD : Check signature, session binding, and expiry
-  opt Signature and pending session are valid
-    AuthD -> RPC : Read finalized server, subscription, and grants
-    RPC --> AuthD : Accounts + freshness metadata, or error
-    AuthD -> AuthD : Check enabled server, active grants, and paid term
-  end
-  alt All checks pass and session is still pending / unexpired
-    AuthD -> AuthD : Atomically consume session
-    AuthD --> SSH : ALLOW / PAM_SUCCESS
-    SSH --> User : Open Linux shell
-  else Invalid proof, expired access, replay, timeout, or unavailable service
-    AuthD -> AuthD : Close pending session
-    AuthD --> SSH : DENY / PAM_AUTH_ERR
-    SSH --> User : Reject login
-  end
+group Daemon signature and authorization checks
+  AuthD -> AuthD : Verify original bytes, signature,\nexpiry, and session binding
+  AuthD -> RPC : Finalized getAccountInfo: discover owner
+  RPC --> AuthD : Server + context slot
+  AuthD -> RPC : Finalized getMultipleAccounts with minContextSlot\nServer, subscription, owner + wallet grants
+  RPC --> AuthD : Combined snapshot + context slot
+  AuthD -> RPC : getBlockTime for combined slot
+  RPC --> AuthD : Block time
+  AuthD -> AuthD : Validate ownership, PDAs, roles, bindings,\nenabled state, expiry, and freshness
 end
 
-note over SSH, AuthD
-  OpenSSH and pam_solana.so share one lifeline for readability.
-  Gateway/setup failures also deny login.
-  No on-chain write or SOL payment occurs during login.
+alt All checks pass before expiry
+  AuthD -> AuthD : Consume session once
+  AuthD --> SSH : allow=true
+  SSH --> User : PAM_SUCCESS; configured user's shell
+else Invalid proof, timeout, disconnect, or service/access failure
+  AuthD --> SSH : Deny when connection is available
+  SSH --> User : Authentication denied
+end
+AuthD -> Gateway : Best-effort DELETE session (bearer token)
+
+note over SSH, RPC
+  Local tests use a CLI signer and synthetic gateway/RPC services.
+  Only the daemon authorizes login. No transaction or SOL payment occurs during login.
+  Grant changes and expiry affect new logins; existing SSH sessions remain open.
 end note
 @enduml

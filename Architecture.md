@@ -1,455 +1,221 @@
-# Solana VPS Access Architecture
+# Solana Wallet Authentication for SSH
 
-**Status:** Proposed proof of concept (POC)  
-**Environment:** Docker backend, SQLite file, one local Linux VM/VPS, Solana devnet or testnet  
-**Billing:** Prepaid native SOL payments on Solana only  
-**Authentication:** OpenSSH + Linux PAM + Solana wallet signature  
-**Authorization:** On-chain subscription and wallet access grants
-> Diagrams are displayed as SVG images for GitHub. Expand **Diagram source (PlantUML)** below each image to view the editable source. See [regeneration instructions](docs/diagrams/README.md).
+**Status:** working PAM/daemon authentication, Axum gateway, browser signing page, billing/access program, provider Bash script, owner dashboard, and local tests; devnet deployment and real-wallet HTTPS/devnet integration planned.
 
-<!-- TOC -->
-- [1. Purpose and Scope](#1-purpose-and-scope)
-- [2. System Requirements](#2-system-requirements)
-  - [2.1. Functional Requirements](#21-functional-requirements)
-  - [2.2. Security and Reliability Requirements](#22-security-and-reliability-requirements)
-  - [2.3. Runtime and Development Requirements](#23-runtime-and-development-requirements)
-- [3. Components and Responsibilities](#3-components-and-responsibilities)
-  - [3.1. Overview](#31-overview)
-  - [3.2. On-Chain Focus](#32-on-chain-focus)
-  - [3.3. Off-Chain Focus](#33-off-chain-focus)
-  - [3.4. Responsibilities](#34-responsibilities)
-- [4. Server Identity and Local Configuration](#4-server-identity-and-local-configuration)
-- [5. On-Chain Data and Instructions](#5-on-chain-data-and-instructions)
-  - [5.1. On-Chain Entity Diagram](#51-on-chain-entity-diagram)
-- [6. Solana-Only Billing and Provisioning Flow](#6-solana-only-billing-and-provisioning-flow)
-- [7. Wallet Authentication Through SSH](#7-wallet-authentication-through-ssh)
-  - [7.1. Login-Time Sequence Diagram](#71-login-time-sequence-diagram)
-  - [7.2. Detailed SSH Component Diagram](#72-detailed-ssh-component-diagram)
-- [8. Authorization Decision and Expiration](#8-authorization-decision-and-expiration)
-- [9. VPS Enforcement and Recovery](#9-vps-enforcement-and-recovery)
-- [10. Local State and Audit Records](#10-local-state-and-audit-records)
-  - [10.1. Off-Chain Entity Diagram](#101-off-chain-entity-diagram)
-- [11. Testing](#11-testing)
-  - [11.1. Test Environment](#111-test-environment)
-  - [11.2. Test Execution](#112-test-execution)
-- [12. Acceptance Scenarios](#12-acceptance-scenarios)
-- [13. Work Breakdown](#13-work-breakdown)
-  - [13.1. Vassil: PAM and Backend](#131-vassil-pam-and-backend)
-  - [13.2. Anurag: Frontend and Backend](#132-anurag-frontend-and-backend)
-  - [13.3. Bala: On-Chain Logic](#133-bala-on-chain-logic)
-  - [13.4. Shared Interfaces and Integration Order](#134-shared-interfaces-and-integration-order)
-- [14. Future Improvements](#14-future-improvements)
-<!-- /TOC -->
+**Integrated target:** one existing Debian 13 VM, Solana devnet, native SOL, and the configured non-root Linux account (`ubuntu` in the demo).
 
+**Compatibility baseline:** [authentication contract v1](ssh/CONTRACTS.md) and the existing Rust implementation.
 
-## 1. Purpose and Scope
+This is a solo-developer project centered on signing in to an existing Linux server with a Solana wallet. The remaining product work adds paid access and a small owner interface around the implemented authentication.
 
-Demonstrate that a user can pay for VPS access with SOL, authenticate with a wallet, and log in through normal SSH while an on-chain subscription is valid.
+## Contents
 
-> **SOL payment activates the subscription → wallet signature proves identity → Solana grants authorize access → PAM allows SSH login.**
+- [Scope and current state](#scope-and-current-state)
+- [Components](#components)
+- [Server setup and identity](#server-setup-and-identity)
+- [On-chain state and instructions](#on-chain-state-and-instructions)
+- [Payments and recovery](#payments-and-recovery)
+- [Wallet authentication through SSH](#wallet-authentication-through-ssh)
+- [Authorization and expiry](#authorization-and-expiry)
+- [Local state and operations](#local-state-and-operations)
+- [Testing and acceptance](#testing-and-acceptance)
+- [Solo-developer roadmap](#solo-developer-roadmap)
 
-The architecture includes:
+Diagrams show the target architecture unless marked as the existing implementation. Their [PlantUML sources and rendering instructions](docs/diagrams/README.md) accompany the SVGs.
 
-- one fixed VPS plan with a SOL price and a prepaid access period;
-- purchase and manual renewal through a browser wallet;
-- one provider-operated portal and authentication gateway;
-- one Solana program for payments, subscriptions, and access grants;
-- one owner wallet and basic delegation to additional wallets;
-- one configured Linux account, such as `ubuntu`, for wallet-authenticated SSH;
-- expiration, revocation, replay protection, and provider recovery access.
+## Scope and current state
 
-All billing payments use native SOL on the configured test cluster. Use test SOL on devnet or testnet for the demonstration; a local validator may be used for isolated program tests. Prices and durations are configured when the server is registered; amounts use integer lamports. The payer also pays transaction fees and any required account rent, separately from the plan price.
+The owner pays for access to a server that the provider has already prepared and registered. The owner can renew access or delegate it to other wallets. During SSH login, an owner or delegate signs a short-lived message using Phantom or Solflare; the daemon checks the signature and on-chain authorization.
 
-## 2. System Requirements
+| Component | Current state |
+| --- | --- |
+| PAM module, daemon, and shared verification library | Implemented under `ssh/` |
+| Debian 13 QEMU/OpenSSH harness | Implemented, using synthetic gateway/RPC services and a command-line signer |
+| Solana billing/access program and provider Bash script | Implemented under `programs/`. Tested on LiteSVM against the auth-core decoder, and on a local validator through the daemon's RPC reader; not yet deployed to devnet |
+| Production gateway and browser signing page | Implemented locally; browser tests use provider doubles with real signatures; HTTPS and installed-wallet integration remains manual |
+| Owner payment/access dashboard | Implemented in `frontend/` and served by the gateway; browser tests drive it against the program on a local validator with real signatures |
 
-### 2.1. Functional Requirements
+Keep the current authentication code and its tests. New components must fit the existing PAM IPC, gateway API, signed bytes, account layouts, and PDA seeds. The contract remains provisional until real program/gateway integration is tested.
 
-- **Wallet access:** Support wallet connection and message signing through Phantom or Solflare. Users connect through a standard OpenSSH client with keyboard-interactive authentication.
-- **Purchase and renewal:** Offer one fixed SOL plan, reserve a server for its owner, and use wallet-signed transactions for purchase and manual renewal. Verify finalized receipts and subscription state before preparing the VM or marking an order paid.
-- **Access control:** Admit an owner or authorized delegate only when the subscription and required grants are active and unexpired. Support delegation, revocation, and provider enable/disable controls.
-- **Login authentication:** Generate a unique, server-bound and account-bound challenge for each SSH request; verify its Ed25519 signature, 90-second expiry, and single-use consumption before PAM allows login.
-- **Provisioning:** Prepare the existing local VM, install and configure OpenSSH, PAM, and `solana-authd`, and report its SSH endpoint only after readiness checks pass. Repeated preparation must be safe and must not charge again.
-- **Persistence and reconciliation:** Persist orders and payment attempts in SQLite, retain them across backend/container restarts, and reconcile uncertain payments against Solana before retrying.
-- **Portal feedback:** Show payment and preparation status, paid-until time, renewal and delegation controls, wallet-signing context, and SSH connection instructions.
-- **Recovery and audit:** Record order/payment transitions and login outcomes, and keep VM console recovery available independently of wallet authentication.
+The product excludes VPS ordering, inventory, automated provisioning, order tracking, a provider administration UI, a dedicated provider CLI, and an application database. Docker is not required; [compose.yaml](compose.yaml) optionally runs the gateway and frontend. Existing VM preparation scripts remain useful test tooling; payments never trigger VM preparation. General-purpose PAM integration beyond the current SSH use case and automatic termination of existing SSH sessions are outside the first version.
 
-### 2.2. Security and Reliability Requirements
-
-- Never request or store wallet private keys or seed phrases. The daemon validates the exact locally generated challenge and makes the authorization decision.
-- Fail closed on invalid, expired, replayed, or mismatched challenges and on unavailable or stale RPC state. Use finalized reads for payment verification and login authorization.
-- Protect root-owned VM configuration and the daemon's Unix socket; authenticate daemon/gateway communication and use HTTPS for externally reachable gateway endpoints.
-- Use integer lamports, atomic on-chain payment/state changes, and stable payment IDs to prevent duplicate charges. Keep program authority credentials separate from the browser, gateway, and VPS daemon.
-- Synchronize the VM clock. Apply the existing 30-second finalized-block freshness limit and avoid cached allow decisions.
-
-### 2.3. Runtime and Development Requirements
-
-| Component | Required environment |
-|-----------|----------------------|
-| Backend | Docker engine and a backend container with published portal/API ports and a persistent mount for the SQLite file. |
-| Database | SQLite stored in a file, for example `/data/solana-vps.sqlite`; the backend container needs read/write access to its mounted directory. |
-| VPS | A local Linux virtual machine with OpenSSH, Linux PAM, `pam_solana.so`, `solana-authd`, a synchronized clock, and console access. |
-| On-chain program | A deployed program and reachable RPC on one selected Solana cluster: devnet or testnet. Provider, treasury, owner, and delegate test wallets need test SOL for their relevant transactions. |
-| Client | A browser with Phantom or Solflare, a standard SSH client, and access to the portal and wallet-signing page. |
-| Build tools | A Linux C toolchain and PAM development headers for the module, the selected backend/frontend toolchains, and Rust/Solana tooling for program builds and deployment. |
-| Networking | Host/browser access to the backend and VM SSH endpoint; daemon access to the gateway and Solana RPC; backend access to RPC and its configured VM preparation channel. |
-
-## 3. Components and Responsibilities
-
-### 3.1. Overview
-
-The main components and their labeled dependencies; internal details are expanded in the following two views.
+## Components
 
 ![System overview](docs/diagrams/system-overview.svg)
 
 [PlantUML source](docs/diagrams/system-overview.puml)
 
-### 3.2. On-Chain Focus
+| Component | Responsibility |
+| --- | --- |
+| Owner dashboard | Connect a wallet; show the price and availability to everyone, and expiry, shared access, payment history, and the SSH command only to wallets entitled to them; submit purchase, renewal, and delegation transactions through RPC after a confirm step |
+| Browser signing page | Display login context and sign the daemon's exact challenge; available to owners and delegates |
+| Authentication gateway | Serve the frontend and relay temporary challenges/proofs over HTTPS; no access decisions |
+| Provider Bash script | Manually register a prepared server for sale with fixed terms; enable/disable the server using the provider's signature |
+| Solana billing/access program | Transfer native SOL atomically with receipts and subscription/owner-grant updates; enforce delegation |
+| `solana-authd` | Create sessions, verify signatures and finalized account state, and return allow/deny |
+| `pam_solana.so` | Display the login URL through PAM, communicate over the protected Unix socket, and return the daemon's decision to OpenSSH |
 
-The client wallet, provider backend, and VPS daemon connect through RPC to the Solana runtime. The billing/access program manages paid access and invokes the System Program for native SOL transfers.
-
-![On-chain components](docs/diagrams/on-chain-components.svg)
-
-[PlantUML source](docs/diagrams/on-chain-components.puml)
-
-### 3.3. Off-Chain Focus
-
-The backend runs as one process in a Docker container with a file-based SQLite DB. The Linux server separates SSH, PAM, and wallet verification. The daemon uses the Portal / Auth API to publish challenges and poll signed responses, and reads finalized access state through Solana RPC.
+The gateway is one small service with in-memory login sessions. The browser and provider Bash script submit signed transactions through RPC; the gateway has no billing, registration, or provisioning API.
 
 ![Off-chain components](docs/diagrams/off-chain-components.svg)
 
 [PlantUML source](docs/diagrams/off-chain-components.puml)
 
-### 3.4. Responsibilities
+The daemon only reads Solana state during login. Program instructions, SOL transfers, and provider operations happen separately.
 
-| Component                 | Responsibility                                                                                                                                    |
-|---------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
-| Browser portal and wallet | Show the SOL price, sign payment transactions, manage delegated wallets, sign SSH login challenges.                                               |
-| Solana program            | Validate payment terms, transfer SOL, record receipts, extend subscription validity, enforce grant permissions.                                   |
-| Provider backend          | Reserve the server, register its terms, verify on-chain payment, prepare the configured test VM, and track orders and payment attempts in the DB. |
-| Authentication gateway    | Relay the VPS-generated challenge and wallet response over HTTPS.                                                                                 |
-| `solana-authd`            | Verify wallet signatures and on-chain authorization, manage local login sessions, return allow/deny.                                              |
-| `pam_solana.so`           | Integrate with OpenSSH, display the authentication URL, communicate with the daemon, return a PAM result.                                         |
+![On-chain components](docs/diagrams/on-chain-components.svg)
 
-The backend stores orders, payment attempts, and target preparation status in the DB. Its portal, order service, and authentication gateway run in one process. Solana is the source of truth for payment receipts and paid access validity.
+[PlantUML source](docs/diagrams/on-chain-components.puml)
 
-## 4. Server Identity and Local Configuration
+## Server setup and identity
 
-Use a random, stable 32-byte `server_id` for the logical VPS. Changing its IP address does not change its subscription or grants.
+Prepare one existing server before offering paid access. Install OpenSSH, Linux-PAM, the module, and the daemon; configure gateway/RPC connectivity and clock synchronization; verify independent console recovery.
 
-The DB and the local test configuration map:
+Generate a stable 32-byte `server_id`. Its identity is bound to the configured program and provider, not to an IP address:
 
 ```text
-DB Order.order_id -> server_id -> configured test VM / SSH endpoint
+(program_id, provider_pubkey, server_id) -> ServerRecord PDA -> configured Linux server
 ```
 
-The test VM address and SSH port stay in local configuration; no VPS inventory table is needed for one target. The on-chain server record binds the server to its provider, owner wallet, and payment terms.
+Use [the existing configuration example](ssh/deploy/server.toml.example) for root-owned mode-0600 `/etc/solana-auth/server.toml`. It includes the program/provider/server identity, `unix_user`, RPC URL, gateway transport URL, public signing origin, bearer token, and socket path. Keep `commitment = "finalized"`, the 300-second challenge lifetime, and `local_test = false` for devnet. Browser input cannot select another server identity or Linux account.
 
-Provision the VPS with:
+The default account is `ubuntu`; the daemon rejects root login. Preserve the installed OpenSSH/PAM account/session checks and the wallet-only authentication policy in [the deployment artifacts](ssh/deploy/). Follow [SSH installation and recovery guidance](ssh/README.md), including `sshd -t`, before enabling the policy.
 
-```toml
-# /etc/solana-auth/server.toml
-cluster = "devnet"
-rpc_url = "https://api.devnet.solana.com"
-program_id = "<deployed-program-public-key>"
-provider_pubkey = "<provider-public-key>"
-server_id = "<32-byte-server-id-as-hex>"
-unix_user = "root"
-auth_gateway = "https://auth.provider.example"
-commitment = "finalized"
-challenge_ttl_seconds = 90
-```
+A simple operator-run Bash script registers the server for sale with a treasury and a fixed positive SOL price and period, and handles enable/disable operations. Keep it as a small setup/maintenance script using the selected program tooling; do not build a separate provider CLI application for the MVP. The provider keeps its signing keys; neither the gateway nor the owner dashboard receives them. Supply the dashboard with non-secret server identity and SSH connection details through deployment configuration.
 
-The provider installs this root-owned configuration. Wallet input cannot choose a different server, program, cluster, or Linux account.
+## On-chain state and instructions
 
-## 5. On-Chain Data and Instructions
+[The program](programs/billing-access/README.md) preserves the first three accounts exactly as decoded by [auth-core](ssh/auth-core/src/accounts.rs); [contract v1](ssh/CONTRACTS.md) defines their field order, discriminator, Borsh encoding, bumps, and role values.
 
-One program owns the following accounts:
+| Account | Purpose | PDA seeds |
+| --- | --- | --- |
+| `ServerRecord` | Provider, server ID, current owner (all-zero until bought), treasury, price, period, enabled flag | `server`, provider public key, server ID |
+| `Subscription` | Server, owner, and paid-until timestamp | `subscription`, server record address |
+| `AccessGrant` | Server, wallet, OWNER/DELEGATED role, active flag, and expiry | `grant`, server record address, wallet public key |
+| `PaymentReceipt` | Server, payer, unique payment ID, amount, paid-at time, resulting paid-until time | `payment`, server record address, payment ID |
 
-| Account          | Main fields                                                                                              | PDA seeds                                 |
-|------------------|----------------------------------------------------------------------------------------------------------|-------------------------------------------|
-| `ServerRecord`   | Provider, server ID, reserved owner wallet, treasury, price in lamports, period in seconds, enabled flag | `server`, provider public key, server ID  |
-| `Subscription`   | Server, owner wallet, paid-until timestamp                                                               | `subscription`, server record             |
-| `AccessGrant`    | Server, wallet, grant type (`OWNER` / `DELEGATED`), active flag, valid-until timestamp                   | `grant`, server record, wallet public key |
-| `PaymentReceipt` | Server, payer, payment ID, amount, paid-at timestamp, resulting paid-until timestamp                     | `payment`, server record, payment ID      |
-
-Each payment ID is a unique 32-byte value. All seed encodings are fixed, and all accounts include their account discriminator and PDA bump.
+Payment IDs are unique 32-byte values. Receipt encoding and instruction definitions are published in [the program IDL](shared/billing-access/billing_access.json); the daemon does not consume receipts during login.
 
 ```text
-Provider-signed:
-  register_server(server_id, owner_wallet, treasury, price_lamports, period_seconds)
+Provider-signed, through an operator-run Bash script:
+  register_server(server_id, treasury, price_lamports, period_seconds)
   set_server_enabled(enabled)
 
-Owner-signed:
+Buyer-signed, through the dashboard:
   purchase_access(payment_id)
+
+Owner-signed, through the dashboard:
   renew_access(payment_id)
   grant_delegated_access(wallet, valid_until)
   revoke_delegated_access(wallet)
 ```
 
-`register_server` reserves the server for its owner and initializes an unpaid subscription. It requires a positive price and period. Payment terms are immutable for that server record.
+Registration creates the server with no owner (the all-zero key) and an unpaid subscription. Any wallet may purchase a server that has no owner or whose subscription has expired; the buyer becomes the owner in both the server record and the subscription, and the new term starts at purchase time. The previous owner's grant and its delegates' grants already ended with the old term, so they keep no access and the previous owner can no longer renew or delegate. While a term runs, only its owner can pay, by renewing, and renewal remains available to that owner after expiry until another wallet buys. Both payments validate accounts and signers, reject disabled servers and reused payment IDs, and transfer the exact configured lamport amount to the recorded treasury. In the same transaction, set `paid_until = max(paid_until, Clock.unix_timestamp) + period_seconds` with checked arithmetic, create/update the active owner grant to that expiry, and write the receipt. Failure rolls back the transfer and all access updates.
 
-`purchase_access` requires the reserved owner's signature and an unpaid subscription. `renew_access` requires the same owner's signature and a previously purchased subscription. Both instructions:
+Delegation changes require an enabled server and an active, unexpired owner subscription/grant. Reject attempts to modify the owner grant through delegation instructions or to grant beyond the subscription term. Delegates cannot manage access or act as the owner. Renewal extends the owner grant; delegated grants retain their explicit expiry until updated by the owner.
 
-1. Validate the program-owned server, subscription, grant, and receipt PDA addresses and their relationships.
-2. Require an enabled server and the exact treasury configured in its server record.
-3. Create a new receipt; reject an already-used payment ID.
-4. Transfer the configured SOL price from the signing owner's wallet to the treasury through the System Program.
-5. Calculate `paid_until = max(current_chain_time, previous_paid_until) + period_seconds`, with checked arithmetic.
-6. Create or update the owner's active access grant to the new paid-until timestamp and write the receipt.
-
-The SOL transfer and state updates happen in the same transaction. If any step fails, the whole transaction rolls back. The backend cannot activate or extend paid access without a successful on-chain payment.
-
-Only an active owner with an unexpired subscription can create or revoke delegated grants. Delegation instructions reject the reserved owner wallet as their target and cannot overwrite its owner grant. Delegates cannot renew, delegate further, or change the owner. A delegated grant cannot extend beyond the paid subscription. Renewal extends the owner grant; delegates retain their existing expiry until the owner explicitly updates them.
-
-Disabling the server denies all new wallet logins, including the owner's. Payments are rejected while it is disabled.
-
-### 5.1. On-Chain Entity Diagram
-
-![On-chain entity diagram](docs/diagrams/on-chain-entities.svg)
+![On-chain entities](docs/diagrams/on-chain-entities.svg)
 
 [PlantUML source](docs/diagrams/on-chain-entities.puml)
 
-## 6. Solana-Only Billing and Provisioning Flow
+## Payments and recovery
 
-![SOL billing and provisioning flow](docs/diagrams/billing-and-provisioning.svg)
+The owner dashboard reads the configured server's finalized record and displays its price, term, subscription expiry, and SSH instructions. The owner signs a purchase or renewal transaction with a fresh payment ID; the browser submits it through RPC. No order or server-preparation workflow is involved.
 
-[PlantUML source](docs/diagrams/billing-and-provisioning.puml)
+Display a successful payment only after verifying the finalized program-owned receipt and its server, payer, payment ID, amount, and resulting expiry, together with the matching subscription state. Show current access separately from payment history: an old valid receipt does not prove an unexpired subscription or an active grant. A browser callback, a submitted transaction signature, or a standalone SOL transfer cannot establish paid access.
 
-The backend accepts a wallet transaction signature as a tracking hint, then independently verifies the finalized program-owned receipt, server, payer, amount, payment ID, and subscription. A browser callback or a standalone SOL transfer to the treasury cannot mark an order paid.
+Before submission, persist non-secret pending-operation metadata in browser storage, keyed by cluster/program/server/wallet: the operation, payment ID, and signed transaction signature/validity information. Reconcile after reload, reconnect, timeout, or a lost response:
 
-```text
-CREATED -> PAYMENT_PENDING -> PAID -> PROVISIONING -> ACTIVE
-                                             |
-                                             +-> PROVISIONING_FAILED
+1. Check the expected receipt and transaction status through RPC. A valid finalized receipt proves that operation completed; refresh the displayed subscription/grants without paying again.
+2. If the result remains pending or uncertain, keep the same payment ID and show a pending state. Do not create a replacement payment to resolve a timeout.
+3. Rebuild/re-sign only after establishing that the previous transaction failed or expired without execution and that no receipt exists. Reuse the same payment ID for the same operation; on-chain uniqueness prevents a duplicate charge.
+4. If browser metadata is lost or another device is used, recover receipt/transaction history for that wallet and server before retrying an uncertain payment. Browser storage is a recovery aid; Solana remains the authority.
 
-ACTIVE -> EXPIRED
-EXPIRED -> ACTIVE after finalized renewal, if the VM remains available
-```
+A later intentional renewal uses a new payment ID. There is no scheduled debit or automatic wallet signing.
 
-The backend registers the server before presenting payment to the owner. It starts provisioning only after payment finalizes and marks the order active only after the VM is ready and the subscription is still valid.
+![SOL payment and access flow](docs/diagrams/billing-and-provisioning.svg)
 
-The access period starts when payment executes on-chain. Provisioning time therefore consumes part of that period; use a sufficiently long demonstration period and show the paid-until time in the portal.
+[PlantUML source](docs/diagrams/billing-and-provisioning.puml) (the existing filename is retained; the flow contains no provisioning)
 
-Renewal uses `renew_access` with a new payment ID. No scheduled debit or automatic wallet signing occurs. After renewal finalizes, the next SSH login reads the updated subscription.
+## Wallet authentication through SSH
 
-Persist the payment ID before submitting a transaction. If confirmation times out, query the receipt and transaction status before retrying. An uncertain result must not trigger a new payment ID. Reuse the same payment ID when resubmitting a transaction that has definitively expired without execution; its receipt prevents a second charge.
+The user runs `ssh ubuntu@<server>`; the existing local harness uses `ssh -p 2222 ubuntu@127.0.0.2`.
 
-A provisioning failure stays visible as `PROVISIONING_FAILED`. Retry provisioning against the same order and server ID without taking another payment. Recovery is manual; access remains prepaid.
+1. OpenSSH invokes PAM. The module sends the requested Linux account over the root-only daemon socket.
+2. The daemon creates a fresh, connection-bound 5-minute challenge, publishes it through the authenticated gateway API, and returns the signing URL.
+3. PAM displays the URL and a compact terminal QR code for the same URL. The user opens or scans it, connects Phantom or Solflare, and signs the exact bytes decoded from `challenge_base64`.
+4. The browser submits `{wallet, signature_base64}` to the gateway. It reports submission and tells the user to return to SSH and press Enter; submission is not an authorization decision.
+5. The daemon polls the proof, checks signature/session validity and finalized access state, consumes a successful session once, and returns allow/deny through PAM.
 
-## 7. Wallet Authentication Through SSH
+Preserve the existing `VPS-ACCESS-AUTH/1` message prefix and field order, including its trailing LF; the project rename does not rename the protocol. Login signs a message, incurs no transaction fee, and does not transfer SOL. See [contract v1](ssh/CONTRACTS.md) for the exact bytes, IPC frames, and gateway payloads/status codes.
 
-The user connects with the standard client:
+The emitted signing URL is `/v1/sessions/{id}`. The production gateway should serve the browser view for HTML requests while retaining the existing JSON representation for API clients. Keep bearer-authenticated publication, polling, and cleanup; public challenge retrieval and proof submission; one immutable response per live session; and the existing expiry/duplicate errors. Never send the daemon token to the browser.
 
-```bash
-ssh ubuntu@<vps-ip>
-```
-
-For a local VM with SSH forwarded to the host, use `ssh -p 2222 ubuntu@127.0.0.1`.
-
-OpenSSH invokes PAM through keyboard-interactive authentication. The PAM module asks `solana-authd` to create a login session and displays its HTTPS URL. The user opens the URL and signs the exact challenge with Phantom or Solflare.
-
-```text
-VPS-ACCESS-AUTH/1
-cluster=devnet
-program_id=<program-public-key>
-provider=<provider-public-key>
-server_id=<server-id>
-unix_user=ubuntu
-session_id=<random-session-id>
-nonce=<cryptographically-random-nonce>
-issued_at=<UTC-timestamp>
-expires_at=<UTC-timestamp>
-auth_origin=https://auth.provider.example
-```
-
-The daemon keeps the authoritative session locally. Each challenge expires after 90 seconds and belongs to one waiting SSH authentication request. The gateway relays the wallet public key and signature; the daemon verifies Ed25519 over the exact locally stored bytes.
-
-A session succeeds only once. Expired, cancelled, consumed, mismatched, and invalidly signed sessions are denied. Atomic session consumption prevents parallel replies from reusing a challenge. Gateway responses cannot replace the challenge, wallet authorization decision, or requested Linux account.
-
-Signing a login challenge requires no Solana transaction or transaction fee. Payment transactions and login signatures have separate purposes and formats. The system never requests or stores a wallet private key or seed phrase.
-
-### 7.1. Login-Time Sequence Diagram
-
-![Wallet-authenticated SSH login sequence](docs/diagrams/ssh-login.svg)
+![Wallet-authenticated SSH sequence](docs/diagrams/ssh-login.svg)
 
 [PlantUML source](docs/diagrams/ssh-login.puml)
 
-### 7.2. Detailed SSH Component Diagram
+The detailed component diagram describes the existing PAM/daemon code. Its local external services remain fixtures. The Axum gateway and browser signer are implemented; installed wallets, HTTPS, and a deployed program still need integration.
 
-The SSH implementation's process boundaries, shared verification library,
-configuration, gateway and RPC interfaces, and local fixture services are
-shown below. See [the SSH README](ssh/README.md) for setup and operation.
-
-![Detailed wallet-authenticated SSH components](docs/diagrams/ssh-components.svg)
+![Existing SSH implementation](docs/diagrams/ssh-components.svg)
 
 [PlantUML source](docs/diagrams/ssh-components.puml)
 
-## 8. Authorization Decision and Expiration
+## Authorization and expiry
 
-For each new SSH login, `solana-authd` reads the server, subscription, owner grant, and signing wallet's grant in one finalized RPC account read. It validates account ownership, discriminators, PDA derivation, and all server/wallet relationships.
+The daemon uses finalized `getAccountInfo` to discover the owner, then finalized `getMultipleAccounts` for the server, subscription, owner grant, and signing wallet's grant. It requires at least the discovery slot and revalidates the owner in the combined snapshot. Validate program ownership, executable/lamport metadata, encoding/discriminators, PDA bumps, roles, and all wallet/server bindings.
 
-Allow access only when:
+Allow a new login only if the signature is valid for this unused, unexpired session and the configured Linux account matches; the server is enabled; the owner's subscription has not expired; and both the owner grant and signing wallet's appropriate OWNER/DELEGATED grant are active and unexpired. The daemon is the sole login decision maker.
 
-```text
-wallet signature is valid for this unused, unexpired login session
-AND configured Linux account matches the SSH request
-AND server is enabled
-AND subscription belongs to the reserved owner and has not expired
-AND owner grant is active and has not expired
-AND signing wallet has an active, unexpired OWNER or DELEGATED grant
-```
+Use the synchronized VM clock for login expiry and the program's Clock sysvar for on-chain changes. The combined RPC slot's block time must be within 30 seconds of the VM clock. Invalid/stale/unavailable RPC data, gateway failures, disconnects, malformed IPC, and timeouts fail closed. No cached-access or RPC-error fallback is permitted.
 
-Use a synchronized VPS clock for time checks. On-chain instructions use Solana's Clock sysvar. Reject a login if RPC state cannot be read or validated, or the RPC reports a finalized block time more than 30 seconds behind the VPS clock. The daemon uses fresh reads for every authentication decision and no cached allow decisions. Run the local validator continuously so finalized state remains fresh; the same freshness check applies to local tests.
+Expired subscriptions/grants deny new logins without a cleanup transaction. Revocation or server disablement takes effect for new logins when the change is finalized and observed by the daemon. Already established SSH sessions remain open; Linux permissions continue to govern them.
 
-Expired subscriptions deny the owner and all delegates without requiring a backend transaction. Revoked delegated grants and disabled servers deny new logins once the changed state is finalized and observed by RPC.
+## Local state and operations
 
-This check runs at login. Subscription expiry or grant revocation does not terminate an already established SSH session. Linux permissions and the configured account determine what an admitted user can do.
+Keep durable access and payment state on Solana. The gateway stores only short-lived challenges/proofs in memory; the daemon keeps connection-bound sessions in memory. Gateway or daemon restart loses pending login state and requires a new SSH attempt. Browser pending-payment metadata supports recovery but never grants access.
 
-## 9. VPS Enforcement and Recovery
-
-Configure OpenSSH for PAM and keyboard-interactive authentication:
-
-```text
-UsePAM yes
-KbdInteractiveAuthentication yes
-PasswordAuthentication no
-PermitRootLogin no
-
-Match User ubuntu
-    AuthenticationMethods keyboard-interactive:pam
-```
-
-For the demonstration account, configure the PAM authentication stack to require `pam_solana.so` without a password fallback. Check the target distribution's OpenSSH/PAM behavior from the provider console before applying it to remote access.
-
-`pam_solana.so` performs only local IPC and PAM conversation handling. `solana-authd` handles sessions, signatures, HTTPS, and RPC. Protect `/run/solana-authd.sock` with restrictive permissions and verify local peer credentials; unauthorized processes cannot submit authentication decisions.
-
-Keep provider serial-console or rescue access independent of wallet authentication. Test that recovery path before enabling the PAM flow. Protect the provider's program authority and treasury configuration; the VPS and gateway do not hold the owner's keys or the provider registration authority.
-
-## 10. Local State and Audit Records
-
-Run one backend process in a Docker container with a SQLite database file on a persistent mounted volume and one pre-created local Linux test VM. The backend provides the portal, order endpoints, and authentication gateway. For local tests, provisioning means preparing and configuring this VM; no cloud inventory service is required.
-
-Keep two small tables. `Order` tracks the server reservation and target preparation. `PaymentAttempt` tracks each purchase or renewal separately, so a new renewal does not overwrite the original payment ID. Persist each payment ID before submission and reconcile its receipt on Solana after confirmation, an uncertain result, or a backend restart.
-
-### 10.1. Off-Chain Entity Diagram
-
-![Off-chain entity diagram](docs/diagrams/off-chain-entities.svg)
+![Off-chain state](docs/diagrams/off-chain-entities.svg)
 
 [PlantUML source](docs/diagrams/off-chain-entities.puml)
 
-`TestTargetConfig` is local test-runner configuration. It describes one VM reachable through a forwarded SSH port, for example `127.0.0.1:2222`. Install the relevant server identity, RPC, account, and gateway settings as the root-owned `/etc/solana-auth/server.toml` inside the VM. The SSH host and port stay in the test runner's configuration.
+Run the gateway as a normal service serving the frontend; container packaging is optional. Use HTTPS outside explicit loopback `localnet` tests. Protect the daemon socket/configuration and verify root peer credentials. Never collect wallet secrets or put daemon/provider credentials in frontend assets.
 
-For local-validator tests, use `cluster = "localnet"` and the validator's RPC endpoint. The VM must reach the validator and backend through a VM-accessible host address or port forwarding; its own `127.0.0.1` refers to the VM. Configure the browser wallet for the same validator. Use devnet settings when testing against devnet.
+The daemon's existing JSON audit events record login decisions without URLs, tokens, nonces, full challenges, or signatures. Retain the independent serial/provider console for recovery and service diagnostics. Instructions and current QEMU networking details are in [the SSH README](ssh/README.md).
 
-A loopback-only gateway on the host can use HTTP during local testing. Bind the authentication challenge to that exact origin and expose it to the VM through restricted forwarding. Use HTTPS for externally reachable deployments.
+## Testing and acceptance
 
-Write payment, target preparation, renewal, delegation, and login outcomes to a local JSONL audit log with server ID, wallet where applicable, timestamp, and reason. A local log file is sufficient for audit records. Do not log challenge URLs, session tokens, nonces, or full signed challenges.
+The existing suite uses a Debian 13 QEMU VM, real OpenSSH/PAM/daemon code, simulated gateway/RPC services, and a command-line signer. It tests cryptography and authorization against synthetic accounts; it does not test actual payments, cluster finality, deployed-program compatibility, browser wallets, or HTTPS.
 
-Payment status in the DB is a reconciled local view; Solana remains the source of truth for paid access. Preparing the same test target twice must not create another order, VM, or charge.
+Follow [the SSH prerequisites and complete test pipeline](ssh/README.md). From the repository root:
 
-## 11. Testing
+```sh
+./test-all.sh
+```
 
-### 11.1. Test Environment
+Keep this harness and its local VM preparation intact. The planned integrated suite uses the compatible devnet program, real HTTPS gateway, browser wallets, and the already prepared VM.
 
-| Component | Test setup |
-|-----------|------------|
-| Backend | Run the backend in a Docker container and publish the portal/authentication API to the development host. |
-| Database | Use a SQLite file on a bind mount or named volume so order and payment records survive container recreation. |
-| On-chain logic | Deploy and test on devnet or testnet with test SOL. Configure every component and wallet for the same cluster and program ID. A local validator is optional for isolated program tests. |
-| VPS | Use one pre-created local Linux virtual machine with OpenSSH, PAM, and `solana-authd`, plus independent console recovery. |
-| SSH endpoint | Use a local endpoint such as `127.0.0.2` on the development host when VM SSH port forwarding is configured; record the actual forwarded port in local configuration and portal instructions. |
+| Acceptance scenario | Expected result |
+| --- | --- |
+| Paid owner | Finalized SOL purchase activates access; browser message signature permits SSH login as the configured user |
+| Delegate and revocation | Owner grants access; delegate logs in; finalized revocation or grant expiry denies subsequent logins |
+| Expiry and renewal | Expired subscription denies new logins; finalized SOL renewal restores owner access without extending delegates automatically |
+| Payment recovery | Pending/invalid payments do not grant access; duplicate IDs cannot charge twice; uncertain outcomes and reloads reconcile before retry |
+| Signature/session binding | Invalid, replayed, expired, or wrong-server/account signatures are denied |
+| Failures and restart | Stale/unavailable RPC, gateway/daemon failure, and invalid IPC deny login; pending sessions cannot resume after restart |
+| Provider control and recovery | Disabled server denies new logins; console recovery remains independent of wallet authentication |
 
-`127.0.0.2` is a loopback address. It can expose the VM's SSH service through host-side forwarding; it is not the VM's guest-network address. Inside a Docker container, it refers to that container's loopback. Configure backend-to-VM traffic with a reachable VM address or host gateway/forwarded port, and configure daemon-to-backend traffic with an address reachable from the VM.
+Program tests must prove atomic transfer/state updates and compatibility with the existing decoder. Browser/gateway tests must preserve exact signed bytes and authenticated session endpoints. Integration must demonstrate purchase → finalized access → browser signature → SSH shell, followed by renewal and delegation scenarios. Keep evidence redacted; record program/cluster, payment IDs, transaction signatures, and outcomes.
 
-Keep the same `server_id` across the backend, program accounts, and VM configuration. Start with separate provider, treasury, owner, and delegate test wallets and a funded owner wallet. Confirm gateway/RPC connectivity and VM console recovery before enabling wallet-only SSH.
+See [integration test scope](tests/README.md). No runtime tests need rerunning solely for this documentation/diagram simplification.
 
-### 11.2. Test Execution
+## Solo-developer roadmap
 
-1. **Component checks:** Bala tests program account validation, atomic payments, renewal, delegation, and revocation. Vassil tests PAM/daemon signature validation, challenge expiry/replay, authorization, and recovery. Anurag tests wallet connection, signing, and portal flows; Vassil and Anurag test their shared backend APIs with fixtures.
-2. **Integration checks:** Run purchase → finalized payment verification → VM preparation → wallet signature → SSH login using the Docker backend, persistent SQLite file, selected Solana cluster, and local VM.
-3. **Lifecycle and failure checks:** Run every acceptance scenario in the next section, including expiry/renewal, revocation, duplicate notifications, uncertain payment results, provisioning retry, and RPC/gateway failures.
-4. **Persistence and repeatability:** Restart/recreate the backend container with the same SQLite mount and verify that existing orders/payment attempts reconcile without duplicate charges. Restart the daemon and verify that pending challenges are invalidated. Repeat the demo from a clean documented setup.
+Complete the remaining work sequentially. Build and test each component locally first; devnet deployment and devnet testing come last.
 
-Record the cluster, program ID, transaction signatures, order/payment IDs, component logs, and expected versus actual outcomes for each integration run. Keep local console access available throughout PAM/SSH testing.
+1. **Compatible program and provider Bash script.** *Implemented and tested on a local validator, including the daemon's RPC reader.* Implement the documented accounts/instructions and payment receipts, plus a simple Bash script for manual provider registration and enable/disable operations. Test layouts against the existing decoder and payment/delegation behavior on a local validator. No dedicated provider CLI is an MVP deliverable.
+2. **Real gateway and browser signing.** The Axum session gateway and Phantom/Solflare page are implemented. Installed-wallet verification against devnet access records happens in step 4, without changing the existing PAM/daemon protocol. Keep fixture test controls out of this service.
+3. **Owner payment/access dashboard.** *Implemented and tested against a local validator.* Add purchase/renewal, expiry and SSH instructions, delegation/revocation, and pending-payment recovery. Read finalized state and submit wallet-signed transactions directly through RPC. Provider administration stays in the manually run Bash script.
+4. **Devnet deployment and integrated demonstration.** Deploy the program to devnet and register the prepared test server with the provider script. Serve the gateway over HTTPS and verify installed-wallet SSH login against the devnet access records. Exercise the acceptance scenarios with real wallets, verify console recovery, and document repeatable installation/run commands and observed limitations.
 
-## 12. Acceptance Scenarios
-
-The demonstration is complete when these checks pass:
-
-- **Purchase:** An owner pays the exact SOL price; treasury balance increases by the price, and receipt, subscription, and owner grant update atomically.
-- **Payment rejection:** A wrong treasury, wrong owner, insufficient funds, disabled server, or reused payment ID cannot create or extend access; failed transactions leave billing state unchanged.
-- **Provisioning:** Only a finalized valid receipt starts provisioning. A repeated confirmation or provisioning retry does not charge twice or create another VM.
-- **Login:** The paid owner signs a fresh challenge and enters the configured Linux account through normal OpenSSH.
-- **Delegation:** The owner grants a second wallet access; that wallet can log in until its grant is revoked or expires.
-- **Expiry and renewal:** An expired subscription denies new logins; a finalized SOL renewal extends the term and restores access.
-- **Replay and binding:** A consumed challenge, expired challenge, wrong signature, or challenge for another server/account is denied.
-- **Failure and recovery:** RPC or gateway failure denies wallet login, and the provider can still access the VPS through its recovery console.
-
-## 13. Work Breakdown
-
-Divide the POC into three workstreams. Backend work is shared by Vassil and Anurag, with the API boundary agreed before implementation.
-
-| Developer | Primary ownership | Deliverables |
-|-----------|-------------------|--------------|
-| 1. Vassil | PAM + backend | `pam_solana.so`, `solana-authd`, VM/SSH setup and recovery, authentication gateway/session APIs, VM preparation and readiness integration. |
-| 2. Anurag | Frontend + backend | Wallet-connected portal, purchase/renewal and delegation UI, order/payment APIs, SQLite records, finalized payment reconciliation, and Docker backend setup. |
-| 3. Bala | On-chain logic | Solana program, account/instruction definitions, client helpers, deployment configuration, and program tests. |
-
-### 13.1. Vassil: PAM and Backend
-
-- Prepare the local Linux VM and repeatable installation/configuration scripts for OpenSSH, PAM, `solana-authd`, and root-owned `server.toml`.
-- Implement PAM conversation handling and protected Unix-socket communication with the daemon.
-- Generate canonical login challenges; verify signatures, session/account/server binding, expiry, and atomic single-use consumption.
-- Read finalized accounts using Bala's definitions and enforce all authorization conditions, including account/PDA validation and RPC freshness checks.
-- Implement authentication gateway publication, retrieval, signed-response submission, and daemon polling. Preserve exact challenge bytes and keep the authorization decision in `solana-authd`.
-- Provide idempotent VM preparation and readiness checks, and integrate them with Anurag's order workflow.
-- Own SSH login, replay/binding, failure/recovery, and VM preparation checks; document console recovery before enabling the PAM flow.
-
-### 13.2. Anurag: Frontend and Backend
-
-- Build wallet connection, fixed-plan purchase, manual renewal, paid-until display, delegation/revocation controls, wallet-signing pages, and SSH instructions.
-- Implement `Order` and `PaymentAttempt` records in SQLite and the documented order state transitions; persist payment IDs before transaction submission.
-- Register reserved servers through Bala's program, construct wallet-signed transactions, and independently verify finalized receipts and subscription state.
-- Reconcile uncertain transactions and make repeated confirmations and provisioning requests idempotent. Retry `PROVISIONING_FAILED` without taking another payment.
-- Integrate Vassil's authentication APIs and VM preparation checks; show `ACTIVE` only after readiness succeeds.
-- Package the backend in Docker with a persistent SQLite mount and documented networking configuration.
-- Own backend/UI preparation checks, duplicate confirmations, uncertain payments, persistence after restart, and preparation retries.
-
-### 13.3. Bala: On-Chain Logic
-
-- Implement `ServerRecord`, `Subscription`, `AccessGrant`, and `PaymentReceipt` with the defined PDA seeds and validation rules.
-- Implement server registration and enable/disable controls, purchase, renewal, and delegated grant/revocation instructions.
-- Transfer the exact SOL amount to the configured treasury atomically with receipt, subscription, and owner-grant updates; reject duplicate payment IDs and invalid accounts or signers.
-- Publish the program ID, account layouts, instruction definitions/IDL, PDA derivation helpers, errors, and example transactions for Vassil and Anurag.
-- Deploy to the selected devnet/testnet cluster and provide repeatable setup for provider, treasury, owner, and delegate wallets.
-- Own purchase/payment rejection and on-chain expiry/renewal and delegation/revocation checks, including rollback on failure.
-
-### 13.4. Shared Interfaces and Integration Order
-
-| Interface | Lead | Agreement needed |
-|-----------|------|------------------|
-| On-chain/client contract | Bala | Cluster, program ID, account layouts, PDA seed encodings, instruction arguments, errors, payment IDs, and finalized-state fixtures. |
-| Gateway/daemon/frontend contract | Vassil defines sessions and gateway APIs; Anurag integrates the UI | Exact signed bytes, session IDs, publish/fetch/submit/poll payloads, daemon authentication, expiry, and error responses. |
-| Order/payment persistence | Anurag, coordinated with Vassil | SQLite schema and volume path, order/payment states, API payloads, reconciliation, and retry behavior. |
-| Backend/VM preparation | Vassil supplies setup and readiness checks; Anurag integrates the order flow | Server/configuration inputs, reachable endpoints, execution method, idempotent retries, readiness results, and failure reporting. |
-
-1. **Agree on contracts and fixtures:** Select devnet or testnet, assign test wallets, define shared APIs, and fix VM/container networking. Bala provides account/transaction fixtures, Vassil provides canonical challenge and PAM/daemon fixtures, and Anurag provides order/payment and portal fixtures.
-2. **Build each workstream:** Vassil implements PAM/daemon and authentication backend, Anurag implements the portal and order/payment backend, and Bala implements and tests the program.
-3. **Integrate purchase and first login:** Connect the real program, finalized payment verification, VM preparation, wallet signing, and SSH access. Demonstrate a paid owner reaching the configured shell.
-4. **Complete lifecycle and failure checks:** All three developers verify delegation/revocation and expiry/renewal together and run the testing and acceptance scenarios.
-
-Each developer maintains setup instructions and tests for their workstream. The POC is complete when the combined system passes every acceptance scenario and another team member can reproduce the demo from a clean setup.
-
-## 14. Future Improvements
-
-Possible extensions are:
-
-- SPL-token billing on Solana, including USDC, with explicit mint and token-program validation.
-- Multiple plans, providers, regions, and price changes with versioned payment terms.
-- Activation-based billing periods, on-chain escrow, and defined refund handling for provisioning failures.
-- Wallet-authorized recurring payment mechanisms with explicit spending limits and revocation.
-- Separate Linux accounts per wallet, richer team roles, and permission-aware `sudo` integration.
-- Active-session revalidation and termination policies after expiry or revocation.
-- RPC redundancy, subscription monitoring, and bounded authorization caching with measured revocation delays.
-- Multisig provider administration, owner-wallet replacement, and wallet recovery procedures.
-- Production hardening, independent program/security reviews, and a mainnet rollout.
+Keep daemon authorization and PAM IPC unchanged; PAM presentation includes the signing URL and terminal QR code. Any integration mismatch should first be corrected in the new program, gateway, or browser client against the existing contract. Protocol migrations and broader platform features require a separate scope decision.

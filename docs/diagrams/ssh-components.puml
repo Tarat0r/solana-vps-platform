@@ -1,6 +1,6 @@
 @startuml
 !pragma layout smetana
-title Wallet-authenticated SSH: detailed components
+title Existing wallet-authenticated SSH implementation
 top to bottom direction
 skinparam componentStyle uml2
 skinparam shadowing false
@@ -25,7 +25,7 @@ node "Linux VPS\nDebian 13 QEMU guest in the local demo" as VPS #FFF0D9 {
   }
 
   node "solana-authd process\nRoot; restricted systemd service" as Daemon #EAF7ED {
-    component "IPC + session lifecycle\nlib.rs: serve / handle / run_session\nRoot peer credentials; 64 connections\n90-second session per connection\nConsume once; cancel on disconnect" as Sessions #EAF7ED
+    component "IPC + session lifecycle\nlib.rs: serve / handle / run_session\nRoot peer credentials; 64 connections\n5-minute session per connection\nConsume once; cancel on disconnect" as Sessions #EAF7ED
     component "Gateway client + authorization flow\nlib.rs: handle / run_session / poll_and_authorize\nPublish challenge; poll every 250 ms\nVerify proof; read and authorize access\nBest-effort session cleanup" as GatewayClient #EAF7ED
     component "Solana RPC adapter\nrpc.rs: read_access\nBounded JSON + program-owner checks\nFinalized snapshot; reject slot rollback\nBlock-time freshness within 30 seconds" as RPCAdapter #EAF7ED
     component "Configuration loader\nconfig.rs: Config::load / validate\nIdentity, endpoints, token, socket\nValidate root ownership and mode" as Config #EAF7ED
@@ -88,5 +88,6 @@ legend bottom left
   Local test-services: gateway :8080, fixture RPC :8899, loopback HTTP only.
   Local CLI signing replaces the browser; no deployed program or SOL transfer.
   Login only reads on-chain state. Grant changes affect new logins.
+  Browser wallet and real gateway/program integration are planned.
 endlegend
 @enduml

@@ -1,63 +1,41 @@
 @startuml
-top to bottom direction
-skinparam componentStyle uml2
-skinparam shadowing false
 skinparam defaultFontName SansSerif
 skinparam defaultFontSize 14
-skinparam nodesep 80
-skinparam ranksep 80
-skinparam linetype polyline
 skinparam ArrowFontSize 12
+skinparam shadowing false
+skinparam nodesep 45
+skinparam ranksep 55
+title Solana integration: program planned, daemon reads preserved
+top to bottom direction
 
-package "Client Entities" #EAF2FF {
-  component "Browser + Wallet" as Browser #EAF2FF
-  component "SSH Client" as SSH #EAF2FF
-  Browser -[hidden]right-> SSH
-}
-package "Provider Backend" #EAF7ED {
-  component "Portal / Orders / Auth Gateway" as Backend #EAF7ED
-}
-package "Linux Test VM / VPS" #FFF0D9 {
-  component "OpenSSH + PAM" as SSHAccess #FFF0D9
-  component "solana-authd" as AuthD #FFF0D9
-}
-component "Solana RPC Service" as RPC #EDE4FF
-package "Solana Runtime" #EDE4FF {
-  interface "Billing / Access Instructions" as Instructions #EDE4FF
-  component "Billing + Access Program" as Program #EDE4FF
-  artifact "Program-Owned Account State" as Accounts #EDE4FF
+component "Owner dashboard + wallet\n(planned)" as Browser #EAF2FF
+artifact "Provider Bash script\nOperator-run (planned)" as Setup #EAF2FF
+component "solana-authd\n(implemented)" as AuthD #FFF0D9
+cloud "Devnet RPC" as RPC #EDE4FF
+
+node "Solana runtime" #EDE4FF {
+  component "Billing/access program\n(planned)" as Program #EDE4FF
+  database "Program-owned accounts\nServerRecord / Subscription\nAccessGrant / PaymentReceipt" as Accounts #EDE4FF
   component "System Program" as System #EDE4FF
-  artifact "Provider Treasury Account" as Treasury #EDE4FF
+  artifact "Provider treasury" as Treasury #EDE4FF
 }
 
-Browser -[dashed]down-> Backend : Portal / wallet signatures
-SSH -[dashed]down-> SSHAccess : SSH login
-SSHAccess -[dashed]down-> AuthD : Authenticate via PAM
-AuthD -[dashed]left-> Backend : Publish challenges / poll responses
-Browser -[dashed]down--> RPC : Submit signed payment / grant transactions
-Backend -[dashed]down-> RPC : Register server / verify receipts
-AuthD -[dashed]down-> RPC : Read finalized subscription / grants
-RPC -[dashed]down-> Instructions : Submit to runtime
-Program -up- Instructions
-RPC -[dashed]down--> Accounts : Read account state
-Program -[dashed]right-> Accounts : Update subscription / grants / receipts
-Program -[dashed]down-> System : Invoke SOL transfer
-System -[dashed]right-> Treasury : Credit provider treasury
+Browser --> RPC : Purchase / renew / delegation\nRead receipts + access
+Setup --> RPC : Register / enable / disable
+AuthD --> RPC : Read finalized authorization snapshot
+RPC --> Program : Submit signed instructions
+RPC --> Accounts : Read finalized state
+Program --> Accounts : Validate and update
+Program --> System : Native SOL transfer
+System --> Treasury : Exact configured lamports
 
-note bottom of Accounts
-  ServerRecord / Subscription
-  AccessGrant / PaymentReceipt
+note bottom of Program
+  Payment, receipt, subscription, and owner grant
+  update atomically; reused payment IDs are rejected.
+  Preserve the existing daemon's account layouts and PDAs.
 end note
-note bottom of Treasury
-  Native SOL transfer and paid-access updates
-  commit atomically in one transaction.
+note bottom of AuthD
+  Login performs no transaction or SOL transfer.
+  PaymentReceipt is not part of the login snapshot.
 end note
-
-legend bottom
-  |= Color |= Meaning |
-  |<#EAF2FF> Light blue | Client entities |
-  |<#EAF7ED> Light green | Provider backend |
-  |<#FFF0D9> Light orange | VPS / SSH access components |
-  |<#EDE4FF> Light purple | Solana services, programs, and accounts |
-endlegend
 @enduml

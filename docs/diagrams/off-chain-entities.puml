@@ -1,71 +1,58 @@
 @startuml
-hide circle
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam ArrowFontSize 12
 skinparam shadowing false
-skinparam linetype ortho
 skinparam nodesep 45
+skinparam ranksep 55
+title Off-chain state: configuration, temporary sessions, payment recovery
+allowmixing
+hide circle
 
-package "Backend DB" as LocalDB {
-  entity "Order" as Order {
-    * order_id : string <<PK>>
-    --
-    server_id : bytes32 <<unique>>
-    owner_wallet : Pubkey
-    provisioning_status : enum
-    created_at : timestamp
+package "Linux server (implemented)" #FFF0D9 {
+  entity "Daemon configuration" as Config {
+    program_id / provider_pubkey / server_id
+    unix_user / cluster / rpc_url
+    auth_gateway / auth_origin / socket_path
+    gateway_token <<secret>>
   }
-
-  entity "PaymentAttempt" as Payment {
-    * payment_id : bytes32 <<PK>>
-    --
-    order_id : string <<FK>>
-    kind : enum (PURCHASE / RENEWAL)
-    transaction_signature : string [optional]
-    status : enum (PENDING / FINALIZED / FAILED)
-    created_at : timestamp
+  entity "Daemon session (memory)" as AuthSession {
+    challenge bytes / session_id / nonce
+    expiry / monotonic deadline
+    consumed flag
+    original PAM connection
   }
 }
-
-package "Local Test Configuration (file)" {
-  entity "TestTargetConfig" as Config {
-    server_id : bytes32
-    provider_pubkey : Pubkey
-    program_id : Pubkey
-    cluster : string
-    rpc_url : string <<URL>>
-    ssh_host : string
-    ssh_port : u16
-    unix_user : string
-    auth_gateway : string <<URL>>
+package "Gateway (planned)" #EAF7ED {
+  entity "Relay session (memory)" as Relay {
+    session_id
+    challenge_base64 / expires_at
+    optional wallet / signature_base64
   }
 }
-
-package "solana-authd Memory (temporary)" {
-  entity "AuthSession" as Session {
-    * session_id : string <<random token>>
-    --
-    server_id : bytes32
-    unix_user : string
-    nonce : bytes
-    exact_challenge_bytes : bytes
-    issued_at : timestamp
-    expires_at : timestamp
-    wallet_pubkey : Pubkey [optional]
-    status : enum (PENDING / CONSUMED / DENIED / EXPIRED)
+package "Browser (planned)" #EAF2FF {
+  entity "Public deployment configuration" as PublicConfig {
+    cluster / program_id / provider / server_id
+    rpc_url / SSH host / port / unix_user
+  }
+  entity "Pending payment (browser storage)" as Pending {
+    cluster / program / server / wallet
+    operation / payment_id
+    transaction signature / validity metadata
   }
 }
+cloud "Solana: durable payment and access state" as Chain #EDE4FF
 
-Order ||--o{ Payment : purchase / renewals
-Config ..> Order : same server_id
-Config ..> Session : binds server and Linux account
+Config ..> AuthSession : Binds login identity
+AuthSession ..> Relay : Exact published challenge
+PublicConfig ..> Pending : Identifies payment target
+Pending ..> Chain : Reconcile finalized receipt
+AuthSession ..> Chain : Read finalized authorization
 
-note bottom of Payment
-  payment_id identifies the on-chain PaymentReceipt.
-  FINALIZED requires independent receipt verification.
-  An uncertain result stays PENDING until reconciled.
-end note
-
-note bottom of Session
-  Never persisted to the DB.
-  Discard on expiry or daemon restart.
-end note
+legend bottom
+  No application database or order state.
+  Gateway/daemon restarts discard pending login sessions; start a new SSH attempt.
+  Browser metadata helps recover payments but never authorizes access.
+  Never expose daemon tokens or signing keys to the browser.
+endlegend
 @enduml

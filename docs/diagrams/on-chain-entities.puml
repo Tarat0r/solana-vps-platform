@@ -1,10 +1,15 @@
 @startuml
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam ArrowFontSize 12
+skinparam shadowing false
+skinparam nodesep 45
+skinparam ranksep 55
+title On-chain accounts: existing decoder contract + planned receipts
 hide circle
 skinparam linetype ortho
 
-entity "ServerRecord (PDA)" as ServerRecord {
-  * address : Pubkey <<derived>>
-  --
+entity "ServerRecord (PDA)" as ServerRecord #EDE4FF {
   provider : Pubkey
   server_id : bytes32
   owner_wallet : Pubkey
@@ -12,29 +17,23 @@ entity "ServerRecord (PDA)" as ServerRecord {
   price_lamports : u64
   period_seconds : i64
   enabled : bool
+  bump : u8
 }
-
-entity "Subscription (PDA)" as Subscription {
-  * address : Pubkey <<derived>>
-  --
+entity "Subscription (PDA)" as Subscription #EDE4FF {
   server : Pubkey
   owner_wallet : Pubkey
   paid_until : i64
+  bump : u8
 }
-
-entity "AccessGrant (PDA)" as AccessGrant {
-  * address : Pubkey <<derived>>
-  --
+entity "AccessGrant (PDA)" as AccessGrant #EDE4FF {
   server : Pubkey
   wallet : Pubkey
-  grant_type : OWNER / DELEGATED
+  grant_type : u8 [OWNER=0 / DELEGATED=1]
   active : bool
   valid_until : i64
+  bump : u8
 }
-
-entity "PaymentReceipt (PDA)" as PaymentReceipt {
-  * address : Pubkey <<derived>>
-  --
+entity "PaymentReceipt (planned PDA)" as PaymentReceipt #EAF7ED {
   server : Pubkey
   payer : Pubkey
   payment_id : bytes32
@@ -43,22 +42,18 @@ entity "PaymentReceipt (PDA)" as PaymentReceipt {
   resulting_paid_until : i64
 }
 
-ServerRecord ||--|| Subscription : has
-ServerRecord ||--o{ AccessGrant : authorizes wallets
-ServerRecord ||--o{ PaymentReceipt : records payments
-
-note bottom of ServerRecord
-  All four account types are owned by the Solana program.
-  Account addresses are derived from the PDA seeds above.
-  Discriminators and bumps are omitted from this diagram.
-  Provider, owner, payer, wallet, and treasury fields
-  reference public keys, not additional program-owned entities.
-end note
+ServerRecord ||--|| Subscription : paid term
+ServerRecord ||--o{ AccessGrant : owner / delegates
+ServerRecord ||--o{ PaymentReceipt : payments
 
 note bottom of Subscription
-  Initialized unpaid during server registration.
-  Payment atomically updates the subscription,
-  owner grant, and a new payment receipt.
-  Delegated access also requires a valid owner subscription.
+  Registration creates an unpaid subscription.
+  Payment updates its expiry and the owner grant atomically.
 end note
+legend bottom
+  ServerRecord / Subscription / AccessGrant retain the Rust decoder's
+  discriminator, ordered Borsh fields, seeds, bumps, and role encoding.
+  PaymentReceipt is the planned billing model; encoding is defined with the program.
+  The daemon does not read payment receipts during login.
+endlegend
 @enduml

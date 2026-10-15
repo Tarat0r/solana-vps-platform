@@ -1,41 +1,45 @@
 @startuml
-top to bottom direction
-skinparam componentStyle uml2
-skinparam shadowing false
 skinparam defaultFontName SansSerif
 skinparam defaultFontSize 14
-skinparam nodesep 80
-skinparam ranksep 80
-skinparam linetype polyline
 skinparam ArrowFontSize 12
+skinparam shadowing false
+skinparam nodesep 45
+skinparam ranksep 55
+title Wallet-authenticated SSH: target architecture
+left to right direction
 
-package "Client Entities" #EAF2FF {
-  component "Browser + Wallet" as Browser #EAF2FF
-  component "SSH Client" as SSH #EAF2FF
-  Browser -[hidden]right-> SSH
+actor "Owner / delegate" as User #EAF2FF
+actor "Provider" as Provider #EAF2FF
+package "Client applications" #EAF2FF {
+  component "Browser wallet\nOwner dashboard + signing page\n(planned)" as Browser #EAF2FF
+  component "OpenSSH client" as Client #EAF2FF
+  artifact "Provider Bash script\nRegister / enable / disable\n(planned)" as Setup #EAF2FF
 }
-package "Provider Backend" #EAF7ED {
-  component "Portal / Orders / Auth Gateway" as Backend #EAF7ED
+node "Web service (planned)" #EAF7ED {
+  component "Frontend hosting + auth gateway\nTemporary challenges / proofs" as Gateway #EAF7ED
 }
-package "Linux Test VM / VPS" #FFF0D9 {
-  component "SSH Access\nOpenSSH + PAM + solana-authd" as Access #FFF0D9
+node "Existing Linux server" #FFF0D9 {
+  component "OpenSSH + pam_solana.so\n+ solana-authd\n(implemented)" as SSH #FFF0D9
 }
-package "Solana Services" #EDE4FF {
-  component "RPC + billing/access program + accounts" as Solana #EDE4FF
+cloud "Solana" #EDE4FF {
+  component "Devnet RPC" as RPC #EDE4FF
+  database "Billing/access program + accounts\n(planned)" as Chain #EDE4FF
 }
 
-Browser -[dashed]down-> Backend : Portal / wallet signatures
-SSH -[dashed]down-> Access : SSH login
-Access -[dashed]left-> Backend : Publish challenges / poll responses
-Backend -[dashed]down-> Solana : Register server / verify payments
-Access -[dashed]down-> Solana : Read finalized access grants
-Browser -[dashed]down--> Solana : Signed payment / grant transactions
+User --> Browser
+User --> Client
+Provider --> Setup : Run manually
+Client --> SSH : SSH
+Browser --> Gateway : HTTPS: page + login proof
+SSH --> Gateway : Publish challenge / poll proof
+Browser --> RPC : Owner-signed transactions\nRead finalized access / receipts
+Setup --> RPC : Provider-signed transactions
+SSH --> RPC : Read finalized access
+RPC --> Chain
 
 legend bottom
-  |= Color |= Meaning |
-  |<#EAF2FF> Light blue | Client entities |
-  |<#EAF7ED> Light green | Provider backend |
-  |<#FFF0D9> Light orange | VPS / SSH access components |
-  |<#EDE4FF> Light purple | Solana services, programs, and accounts |
+  Target: one prepared Linux server; no ordering or payment-triggered provisioning.
+  The daemon alone authorizes new logins. Payment is separate from login signing.
+  Current local tests use synthetic gateway/RPC services and a CLI signer.
 endlegend
 @enduml
