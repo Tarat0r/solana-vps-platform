@@ -78,11 +78,11 @@ impl Config {
             "invalid gateway token"
         );
         ensure!(
-            !self.local_test || self.cluster == "localnet",
-            "HTTP test mode requires localnet"
+            !self.local_test || matches!(self.cluster.as_str(), "localnet" | "devnet"),
+            "HTTP test mode requires localnet or devnet"
         );
         ensure!(
-            !self.local_test_lan_http || self.local_test,
+            !self.local_test_lan_http || (self.local_test && self.cluster == "localnet"),
             "LAN HTTP is only available in explicit localnet test mode"
         );
         for (index, value) in [&self.auth_gateway, &self.auth_origin, &self.rpc_url]
@@ -176,6 +176,22 @@ mod tests {
         c.local_test = false;
         c.cluster = "devnet".into();
         assert!(c.validate().is_err());
+        c.local_test = true;
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn devnet_test_mode_allows_only_loopback_http() {
+        let mut c = config();
+        c.cluster = "devnet".into();
+        c.rpc_url = "https://api.devnet.solana.com".into();
+        c.auth_origin = "http://127.0.0.1:3000".into();
+        assert!(c.validate().is_ok());
+        c.auth_origin = "http://192.168.1.9:3000".into();
+        assert!(c.validate().is_err());
+        c.auth_origin = "http://127.0.0.1:3000".into();
+        c.local_test = false;
+        assert!(c.validate().is_err());
     }
 
     #[test]
@@ -183,7 +199,8 @@ mod tests {
         assert!(config().validate().is_ok());
         let changes: Vec<fn(&mut Config)> = vec![
             |c| c.local_test = false,
-            |c| c.cluster = "devnet".into(),
+            |c| c.cluster = "testnet".into(),
+            |c| c.cluster = "mainnet-beta".into(),
             |c| c.commitment = "processed".into(),
             |c| c.challenge_ttl_seconds = 90,
             |c| c.unix_user = "root".into(),

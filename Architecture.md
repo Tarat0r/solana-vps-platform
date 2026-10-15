@@ -179,7 +179,7 @@ Keep durable access and payment state on Solana. The gateway stores only short-l
 
 [PlantUML source](docs/diagrams/off-chain-entities.puml)
 
-Run the gateway as a normal service serving the frontend; container packaging is optional. Use HTTPS outside explicit loopback `localnet` tests. Protect the daemon socket/configuration and verify root peer credentials. Never collect wallet secrets or put daemon/provider credentials in frontend assets.
+Run the gateway as a normal service serving the frontend; container packaging is optional. Use HTTPS outside explicit loopback tests on `localnet` or `devnet`. Protect the daemon socket/configuration and verify root peer credentials. Never collect wallet secrets or put daemon/provider credentials in frontend assets.
 
 The daemon's existing JSON audit events record login decisions without URLs, tokens, nonces, full challenges, or signatures. Retain the independent serial/provider console for recovery and service diagnostics. Instructions and current QEMU networking details are in [the SSH README](ssh/README.md).
 
