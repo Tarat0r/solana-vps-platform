@@ -260,10 +260,13 @@ deploy_program() {
         # The deploy buffer holds a second copy until the program account takes it over.
         program=$keypair copies=2
     fi
+    # Reclaims the rent of buffers that an interrupted deploy left behind.
+    solana program close --buffers --url "$rpc" --keypair "$data/provider.json" >/dev/null
     rent=$(solana rent "$((size + 45))" --lamports --url "$rpc" --keypair "$data/provider.json" | awk 'NF { print $(NF - 1) }')
     need_lamports "$((copies * rent + 100000000))"
+    # Buffer writes go to the leaders directly: the public RPC rate-limits them.
     solana program deploy "$so" --program-id "$program" --keypair "$data/provider.json" \
-        --url "$rpc" --use-rpc --with-compute-unit-price 10000
+        --url "$rpc" --with-compute-unit-price 10000 --max-sign-attempts 50
 }
 
 # Prints server $1's record address, and "registered" when it exists.
