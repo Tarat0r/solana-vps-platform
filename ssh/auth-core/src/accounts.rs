@@ -144,6 +144,15 @@ impl AccessSnapshot {
         );
         Ok(())
     }
+
+    /// When the access that [`Self::authorize`] allows ends: the earliest of the
+    /// subscription and both grants.
+    pub fn access_until(&self) -> i64 {
+        self.subscription
+            .paid_until
+            .min(self.owner_grant.valid_until)
+            .min(self.wallet_grant.valid_until)
+    }
 }
 
 pub fn check_freshness(block_time: i64, now: i64) -> Result<()> {
@@ -220,6 +229,18 @@ mod tests {
                 assert!(check(&s).is_err());
             }
         }
+    }
+
+    #[test]
+    fn access_ends_with_the_subscription_or_either_grant() {
+        let mut s = snapshot([6; 32]);
+        assert_eq!(s.access_until(), 101);
+        s.wallet_grant.valid_until = 90;
+        assert_eq!(s.access_until(), 90);
+        s.owner_grant.valid_until = 80;
+        assert_eq!(s.access_until(), 80);
+        s.subscription.paid_until = 70;
+        assert_eq!(s.access_until(), 70);
     }
 
     #[test]

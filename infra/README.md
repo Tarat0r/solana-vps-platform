@@ -10,7 +10,7 @@ Existing installation artifacts live under [ssh/deploy/](../ssh/deploy/):
 
 The remaining deployment work is a real HTTPS gateway serving the frontend, a compatible devnet program, and a simple provider Bash script for manual registration and enable/disable operations. A dedicated provider CLI is outside the MVP scope. Keep provider signing keys under the operator's control. Publish only non-secret server identity and SSH connection details to the dashboard. No database service or persistent database volume is needed.
 
-Verify daemon-to-gateway/RPC connectivity, browser access, synchronized clocks, and console recovery before enforcing wallet-only SSH. Use `sshd -t` to check the installed SSH policy. A grant change or subscription expiry affects new logins, not established SSH sessions.
+Verify daemon-to-gateway/RPC connectivity, browser access, synchronized clocks, and console recovery before enforcing wallet-only SSH. Use `sshd -t` to check the installed SSH policy. A grant change or subscription expiry denies new logins and ends open wallet logins, after a one-minute warning at expiry.
 
 The local fixture harness exposes SSH at `127.0.0.2:2222`; gateway/RPC forwarding and guest addresses are documented in the SSH README. Do not install its fixture services or keys on a real server.
 

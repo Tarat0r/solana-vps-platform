@@ -408,4 +408,5 @@ install the daemon/PAM library, and supply root-owned mode-0600
 Keep Debian's account/session checks; replace its authentication stack with
 `auth requisite pam_solana.so`. Run `sshd -t` and verify console recovery before
 activating the policy. Never install the fixture service on a production server.
-Grant changes affect new logins; existing SSH sessions remain established.
+Expiry, revocation and server disablement also end open wallet logins: see
+[solana-authd](solana-authd/README.md).

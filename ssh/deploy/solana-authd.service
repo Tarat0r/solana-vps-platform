@@ -14,7 +14,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-PrivateDevices=yes
+# The only devices used are terminals, to warn wallet logins before their
+# access ends; group tty may write to those whose users allow messages.
+DevicePolicy=closed
+DeviceAllow=char-pts w
+SupplementaryGroups=tty
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

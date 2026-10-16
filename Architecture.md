@@ -37,7 +37,7 @@ The owner pays for access to a server that the provider has already prepared and
 
 Keep the current authentication code and its tests. New components must fit the existing PAM IPC, gateway API, signed bytes, account layouts, and PDA seeds. The contract remains provisional until real program/gateway integration is tested.
 
-The product excludes VPS ordering, inventory, automated provisioning, order tracking, a provider administration UI, a dedicated provider CLI, and an application database. Docker is not required; [compose.yaml](compose.yaml) optionally runs the gateway and frontend. Existing VM preparation scripts remain useful test tooling; payments never trigger VM preparation. General-purpose PAM integration beyond the current SSH use case and automatic termination of existing SSH sessions are outside the first version.
+The product excludes VPS ordering, inventory, automated provisioning, order tracking, a provider administration UI, a dedicated provider CLI, and an application database. Docker is not required; [compose.yaml](compose.yaml) optionally runs the gateway and frontend. Existing VM preparation scripts remain useful test tooling; payments never trigger VM preparation. General-purpose PAM integration beyond the current SSH use case is outside the first version.
 
 ## Components
 
@@ -169,7 +169,9 @@ Allow a new login only if the signature is valid for this unused, unexpired sess
 
 Use the synchronized VM clock for login expiry and the program's Clock sysvar for on-chain changes. The combined RPC slot's block time must be within 30 seconds of the VM clock. Invalid/stale/unavailable RPC data, gateway failures, disconnects, malformed IPC, and timeouts fail closed. No cached-access or RPC-error fallback is permitted.
 
-Expired subscriptions/grants deny new logins without a cleanup transaction. Revocation or server disablement takes effect for new logins when the change is finalized and observed by the daemon. Already established SSH sessions remain open; Linux permissions continue to govern them.
+Expired subscriptions/grants deny new logins without a cleanup transaction. Revocation or server disablement takes effect for new logins when the change is finalized and observed by the daemon.
+
+Access also ends logins that are already open. The daemon records each allowed login's per-connection `sshd-session` process, which it finds through the PAM client's peer credentials, together with the wallet and the earliest of the subscription and grant expiries. It warns the login's terminal a minute before that deadline and terminates the login's logind session at the deadline, which also ends processes left running in the background. Every 60 seconds it re-reads finalized access state for open logins: revocation, server disablement, or a new owner ends them, and renewal moves the deadline. If that state cannot be read, the known deadline still applies. A login whose `sshd-session` process cannot be identified is denied. Open logins are saved under `/run`, so a daemon restart keeps enforcing them.
 
 ## Local state and operations
 
@@ -181,7 +183,7 @@ Keep durable access and payment state on Solana. The gateway stores only short-l
 
 Run the gateway as a normal service serving the frontend; container packaging is optional. Use HTTPS outside explicit loopback tests on `localnet` or `devnet`. Protect the daemon socket/configuration and verify root peer credentials. Never collect wallet secrets or put daemon/provider credentials in frontend assets.
 
-The daemon's existing JSON audit events record login decisions without URLs, tokens, nonces, full challenges, or signatures. Retain the independent serial/provider console for recovery and service diagnostics. Instructions and current QEMU networking details are in [the SSH README](ssh/README.md).
+The daemon's JSON audit events record login decisions and ended sessions without URLs, tokens, nonces, full challenges, or signatures. Retain the independent serial/provider console for recovery and service diagnostics. Instructions and current QEMU networking details are in [the SSH README](ssh/README.md).
 
 ## Testing and acceptance
 

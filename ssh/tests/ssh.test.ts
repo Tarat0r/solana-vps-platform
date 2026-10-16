@@ -26,7 +26,7 @@ async function api(endpoint: string, body?: unknown) {
 
 async function scenario(mode: string) { await api('/_test/scenario', { scenario: mode }); }
 
-function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: string, killAfterMs = 120_000, env: Record<string, string> = {}) {
+function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: string, killAfterMs = 120_000, env: Record<string, string> = {}, command = 'id -un') {
   const directory = fs.mkdtempSync(path.join(stateDir, 'case-'));
   cases.push(directory);
   const process = spawn('ssh', [
@@ -34,7 +34,7 @@ function login(mode = 'owner', user = 'ubuntu', extra: string[] = [], replay?: s
     '-o', 'StrictHostKeyChecking=yes', '-o', `UserKnownHostsFile="${path.join(stateDir, 'known_hosts')}"`,
     ...extra,
     '-o', 'PreferredAuthentications=keyboard-interactive', '-o', 'NumberOfPasswordPrompts=1',
-    `${user}@127.0.0.2`, 'id -un',
+    `${user}@127.0.0.2`, command,
   ], {
     detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...globalThis.process.env, SSH_ASKPASS: path.join(root, 'tests/askpass.sh'), SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':solana-test', SSH_TEST_CASE: directory, SSH_TEST_MODE: mode, SSH_TEST_REPLAY: replay, ...env },
@@ -66,6 +66,32 @@ async function waitForCleanup() {
   }
   const diagnostics = await terminal.command("ps -eo pid,ppid,args | grep '[s]shd'; ss -xnp | grep solana-authd || true; journalctl -u ssh -n 12 --no-pager");
   throw new Error('gateway session was not cleaned up after disconnect/decision\n' + diagnostics);
+}
+
+/** Logs in with a terminal and keeps the session open until it is ended. */
+function openSession(mode: string, command = 'exec sleep 600') {
+  return login(mode, 'ubuntu', ['-tt'], undefined, 150_000, {}, `echo session-open; ${command}`);
+}
+
+/** Resolves once the session's output matches `text`. Call before awaiting anything else. */
+function waitForOutput(child: ChildProcess, text: RegExp, timeoutMs: number) {
+  let output = '';
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no ${text} within ${timeoutMs} ms`)), timeoutMs);
+    child.stdout!.on('data', data => {
+      output += data;
+      if (text.test(output)) { clearTimeout(timer); resolve(); }
+    });
+  });
+}
+
+/** Asserts that the daemon ended a login for `reason` by terminating its whole logind session. */
+async function sessionEnded(reason: string) {
+  const journal = await terminal.command('journalctl -u solana-authd -n 30 --no-pager -o cat');
+  const events = journal.split(/\r?\n/).filter(line => line.startsWith('{')).map(line => JSON.parse(line) as Record<string, unknown>);
+  const ended = events.filter(event => event.event === 'ssh_session_ended' && event.reason === reason).at(-1);
+  assert.ok(ended, `no ssh_session_ended event for ${reason}`);
+  assert.equal(ended.ended_by, 'logind');
 }
 
 async function deniedWallet(mode = 'owner') {
@@ -228,6 +254,49 @@ check('fresh renewed fixture state restores access', async () => {
   await scenario('allow');
   assert.equal((await login().done).code, 0);
 });
+
+check('an open session is warned, then ended when its access expires', async () => {
+  // The fixture's subscription ends 70 s after this scenario is selected.
+  await scenario('expiring');
+  const selected = Date.now();
+  try {
+    // The background job must end with the login, as logind terminates the whole session.
+    const session = openSession('owner', 'nohup sleep 900 >/dev/null 2>&1 & exec sleep 600');
+    const opened = waitForOutput(session.process, /session-open/, 30_000);
+    const warned = waitForOutput(session.process, /Wallet access to this server ends in 1 minute/, 60_000);
+    await opened;
+    await warned;
+    const result = await session.done;
+    const elapsed = Date.now() - selected;
+    assert.notEqual(result.code, 0);
+    assert.ok(elapsed >= 65_000 && elapsed < 90_000, `the session ended ${elapsed} ms after access was set to expire in 70 s`);
+    await sessionEnded('access_expired');
+    assert.doesNotMatch(await terminal.command('pgrep -u ubuntu -a sleep || echo none'), /sleep 900/);
+  } finally { await scenario('allow'); }
+}, 150_000);
+
+check("revoking a delegate ends its open session but not the owner's", async () => {
+  const owner = openSession('owner');
+  const delegate = openSession('delegate');
+  await Promise.all([
+    waitForOutput(owner.process, /session-open/, 30_000),
+    waitForOutput(delegate.process, /session-open/, 30_000),
+  ]);
+  await scenario('delegate_revoked');
+  const revoked = Date.now();
+  try {
+    assert.notEqual((await delegate.done).code, 0);
+    const elapsed = Date.now() - revoked;
+    // Access state is re-read every 60 s.
+    assert.ok(elapsed < 75_000, `the delegate session ended ${elapsed} ms after revocation`);
+    assert.equal(owner.process.exitCode, null, "the owner's session must stay open");
+    await sessionEnded('access_revoked');
+  } finally {
+    await scenario('allow');
+    try { process.kill(-owner.process.pid!, 'SIGTERM'); } catch { /* exited */ }
+    await owner.done;
+  }
+}, 150_000);
 
 check('wrong Linux account and password/public-key methods cannot bypass PAM', async () => {
   const effective = await terminal.command('sshd -T -C user=ubuntu,host=localhost,addr=127.0.0.1');

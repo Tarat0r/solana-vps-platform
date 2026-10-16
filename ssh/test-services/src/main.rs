@@ -47,7 +47,10 @@ const SCENARIOS: &[&str] = &[
     "missing_account",
     "stale_context",
     "changed_owner",
+    "expiring",
 ];
+/// How long access lasts after the "expiring" scenario is selected.
+const EXPIRING_SECONDS: i64 = 70;
 
 fn key(bytes: [u8; 32]) -> String {
     bs58::encode(bytes).into_string()
@@ -67,6 +70,8 @@ struct Entry {
 }
 struct Data {
     scenario: String,
+    /// When the scenario was selected.
+    selected_at: i64,
     sessions: HashMap<String, Entry>,
 }
 #[derive(Clone)]
@@ -228,7 +233,9 @@ async fn scenario(
     if !SCENARIOS.contains(&input.scenario.as_str()) {
         return StatusCode::BAD_REQUEST;
     }
-    app.data().scenario = input.scenario;
+    let mut data = app.data();
+    data.scenario = input.scenario;
+    data.selected_at = unix_time();
     StatusCode::NO_CONTENT
 }
 
@@ -251,6 +258,7 @@ fn account_value<T: accounts::Account>(account: &T, scenario: &str) -> Value {
 
 fn fixtures(
     scenario: &str,
+    selected_at: i64,
     combined: bool,
     phone_wallet: Option<[u8; 32]>,
 ) -> HashMap<String, Value> {
@@ -281,10 +289,10 @@ fn fixtures(
     let sub = Subscription {
         server,
         owner_wallet: owner,
-        paid_until: if scenario == "subscription_expired" {
-            now
-        } else {
-            now + 3600
+        paid_until: match scenario {
+            "subscription_expired" => now,
+            "expiring" => selected_at + EXPIRING_SECONDS,
+            _ => now + 3600,
         },
         bump: sub_bump,
     };
@@ -335,13 +343,21 @@ fn fixtures(
 }
 
 async fn rpc(State(app): State<App>, Json(request): Json<Value>) -> Response {
-    let mode = app.data().scenario.clone();
+    let (mode, selected_at) = {
+        let data = app.data();
+        (data.scenario.clone(), data.selected_at)
+    };
     if mode == "rpc_unavailable" {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let method = request["method"].as_str().unwrap_or("");
     let params = &request["params"];
-    let accounts = fixtures(&mode, method == "getMultipleAccounts", app.phone_wallet);
+    let accounts = fixtures(
+        &mode,
+        selected_at,
+        method == "getMultipleAccounts",
+        app.phone_wallet,
+    );
     let result=match method {
         "getAccountInfo" if params[1]["commitment"]=="finalized" => json!({"context":{"slot":100},"value":accounts.get(params[0].as_str().unwrap_or(""))}),
         "getMultipleAccounts" if params[1]["commitment"]=="finalized" && params[1]["minContextSlot"]==100 => {
@@ -371,6 +387,7 @@ async fn serve() -> Result<()> {
             .transpose()?,
         data: Arc::new(Mutex::new(Data {
             scenario: "allow".into(),
+            selected_at: unix_time(),
             sessions: HashMap::new(),
         })),
     };
@@ -580,8 +597,8 @@ mod phone_tests {
         let (server, _) = accounts::pda(&PROGRAM, &[b"server", &PROVIDER, &SERVER]);
         let (grant, _) = accounts::pda(&PROGRAM, &[b"grant", &server, &wallet]);
         let address = key(grant);
-        assert!(!fixtures("allow", true, None).contains_key(&address));
-        let values = fixtures("allow", true, Some(wallet));
+        assert!(!fixtures("allow", 0, true, None).contains_key(&address));
+        let values = fixtures("allow", 0, true, Some(wallet));
         let bytes = STANDARD
             .decode(values[&address]["data"][0].as_str().unwrap())
             .unwrap();
@@ -590,7 +607,7 @@ mod phone_tests {
         assert_eq!(decoded.server, server);
         assert_eq!(decoded.grant_type, GrantType::Delegated);
         assert!(decoded.active && decoded.valid_until > unix_time());
-        let revoked = fixtures("delegate_revoked", true, Some(wallet));
+        let revoked = fixtures("delegate_revoked", 0, true, Some(wallet));
         let bytes = STANDARD
             .decode(revoked[&address]["data"][0].as_str().unwrap())
             .unwrap();

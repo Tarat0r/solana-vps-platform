@@ -72,4 +72,4 @@ The first run creates the provider key in `.run/devnet/` and stops with its addr
 
 To run only the gateway and frontend in Docker, see [Run with Docker](backend/README.md#run-with-docker).
 
-The eventual integrated demonstration uses Solana devnet and one existing Debian VM. The current fixture suite uses `localnet`. Expiry and revocation affect new logins; established SSH sessions remain open.
+The eventual integrated demonstration uses Solana devnet and one existing Debian VM. The current fixture suite uses `localnet`. Expiry and revocation deny new logins and end open SSH sessions, after a one-minute warning at expiry.

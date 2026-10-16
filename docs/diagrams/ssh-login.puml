@@ -60,6 +60,6 @@ AuthD -> Gateway : Best-effort DELETE session (bearer token)
 note over SSH, RPC
   Local tests use a CLI signer and synthetic gateway/RPC services.
   Only the daemon authorizes login. No transaction or SOL payment occurs during login.
-  Grant changes and expiry affect new logins; existing SSH sessions remain open.
+  Grant changes and expiry deny new logins and end open sessions.
 end note
 @enduml

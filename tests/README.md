@@ -20,7 +20,7 @@ Keep component tests beside their implementations and add cross-component scenar
 
 - Provider registers an already prepared server; its owner pays SOL, waits for finalized access state, signs in through the browser, and reaches the configured Linux account over SSH.
 - Pending/invalid payments do not establish access; duplicate payment IDs cannot charge twice; uncertain results reconcile against finalized receipts before retrying.
-- Subscription expiry denies new logins; finalized renewal restores them. Established SSH sessions remain open.
+- Subscription expiry denies new logins and ends open SSH sessions after a one-minute warning; finalized renewal restores access.
 - Owner grants a delegate access, the delegate logs in, and revocation/expiry prevents subsequent logins. Provider disablement also denies new logins.
 - Invalid signatures, replay, expired challenges, wrong server/account bindings, and unauthorized IPC or gateway requests fail closed.
 - Stale/unavailable RPC and gateway/daemon failures deny login; gateway/daemon restarts require new pending login attempts; provider console recovery remains usable.

@@ -2,6 +2,7 @@
 #![allow(unsafe_code)]
 pub mod config;
 pub mod rpc;
+pub mod sessions;
 
 use anyhow::{ensure, Result};
 use auth_core::{
@@ -12,6 +13,7 @@ use auth_core::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use config::Config;
+use sessions::{Login, Logins};
 use std::{
     fs::OpenOptions,
     os::{
@@ -76,19 +78,21 @@ async fn respond<W: AsyncWrite + Unpin>(writer: &mut W, message: &Response) -> R
     Ok(())
 }
 
-fn audit(config: &Config, allow: bool) {
+fn audit(config: &Config, allow: bool, reason: &str) {
     eprintln!(
         "{}",
-        serde_json::json!({"event":"ssh_login", "timestamp":unix_time(), "server_id":config.server_id, "unix_user":config.unix_user, "allow":allow, "reason":if allow {"authorized"} else {"authentication_failed"}})
+        serde_json::json!({"event":"ssh_login", "timestamp":unix_time(), "server_id":config.server_id, "unix_user":config.unix_user, "allow":allow, "reason":reason})
     );
 }
 
+/// Waits for the wallet's proof and authorizes it; returns the wallet and when
+/// its access ends.
 async fn poll_and_authorize(
     client: &reqwest::Client,
     config: &Config,
     session: &mut Session,
     endpoint: &str,
-) -> Result<()> {
+) -> Result<([u8; 32], i64)> {
     loop {
         let response = client
             .get(format!("{endpoint}/response"))
@@ -114,7 +118,7 @@ async fn poll_and_authorize(
             unix_time(),
         )?;
         session.consume()?;
-        return Ok(());
+        return Ok((wallet, snapshot.access_until()));
     }
 }
 
@@ -124,7 +128,7 @@ async fn run_session(
     client: &reqwest::Client,
     session: &mut Session,
     endpoint: &str,
-) -> Result<()> {
+) -> Result<([u8; 32], i64)> {
     let published = PublishedChallenge {
         session_id: session.challenge.id.clone(),
         challenge_base64: STANDARD.encode(&session.challenge.bytes),
@@ -171,12 +175,27 @@ async fn run_session(
     }
 }
 
+async fn deny(stream: &mut UnixStream, config: &Config, reason: &str) {
+    audit(config, false, reason);
+    let _ = respond(
+        stream,
+        &Response::Result {
+            version: VERSION,
+            allow: false,
+            reason: "invalid_request".into(),
+        },
+    )
+    .await;
+}
+
 async fn handle(
     mut stream: UnixStream,
     config: Arc<Config>,
     client: reqwest::Client,
+    logins: Arc<Logins>,
 ) -> Result<()> {
-    ensure!(stream.peer_cred()?.uid() == 0, "unauthorized peer");
+    let peer = stream.peer_cred()?;
+    ensure!(peer.uid() == 0, "unauthorized peer");
     // Reading just the first frame without buffering prevents discarding pipelined bytes.
     let initial = timeout(
         Duration::from_secs(5),
@@ -185,33 +204,49 @@ async fn handle(
     .await;
     let valid_start = matches!(initial, Ok(Ok(Request::Start {version: VERSION, unix_user})) if unix_user == config.unix_user);
     if !valid_start {
-        audit(&config, false);
-        let _ = respond(
-            &mut stream,
-            &Response::Result {
-                version: VERSION,
-                allow: false,
-                reason: "invalid_request".into(),
-            },
-        )
-        .await;
+        deny(&mut stream, &config, "authentication_failed").await;
         return Ok(());
     }
+    // A login that could not be ended when its access ends is never allowed.
+    let Some((pid, start_time)) = peer
+        .pid()
+        .and_then(|peer| sessions::monitor(Path::new("/proc"), peer).ok())
+    else {
+        deny(&mut stream, &config, "untracked_connection").await;
+        return Ok(());
+    };
     let mut session = Session::new(&config)?;
     let endpoint = format!(
         "{}/v1/sessions/{}",
         config.auth_gateway.trim_end_matches('/'),
         session.challenge.id
     );
-    let allowed = matches!(
-        timeout_at(
-            session.deadline,
-            run_session(&mut stream, &config, &client, &mut session, &endpoint)
-        )
-        .await,
-        Ok(Ok(()))
+    let allowed = match timeout_at(
+        session.deadline,
+        run_session(&mut stream, &config, &client, &mut session, &endpoint),
+    )
+    .await
+    {
+        Ok(Ok((wallet, deadline))) => logins
+            .add(Login {
+                pid,
+                start_time,
+                wallet,
+                deadline,
+                warned: false,
+            })
+            .is_ok(),
+        _ => false,
+    };
+    audit(
+        &config,
+        allowed,
+        if allowed {
+            "authorized"
+        } else {
+            "authentication_failed"
+        },
     );
-    audit(&config, allowed);
     let _ = timeout(
         Duration::from_secs(1),
         respond(
@@ -284,6 +319,15 @@ pub async fn serve(config: Config) -> Result<()> {
         .no_proxy()
         .build()?;
     let config = Arc::new(config);
+    let logins = Arc::new(Logins::load(
+        socket.with_extension("sessions"),
+        "/proc".into(),
+    ));
+    tokio::spawn(sessions::enforce(
+        logins.clone(),
+        config.clone(),
+        client.clone(),
+    ));
     let limit = Arc::new(Semaphore::new(64));
     let mut stop = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
@@ -292,8 +336,8 @@ pub async fn serve(config: Config) -> Result<()> {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
                 if let Ok(permit) = limit.clone().try_acquire_owned() {
-                    let config = config.clone(); let client = client.clone();
-                    tokio::spawn(async move { let _permit = permit; let _ = handle(stream, config, client).await; });
+                    let config = config.clone(); let client = client.clone(); let logins = logins.clone();
+                    tokio::spawn(async move { let _permit = permit; let _ = handle(stream, config, client, logins).await; });
                 }
             }
         }
