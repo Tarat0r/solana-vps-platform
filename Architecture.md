@@ -1,8 +1,8 @@
 # Solana Wallet Authentication for SSH
 
-**Status:** working PAM/daemon authentication, Axum gateway, browser signing page, billing/access program, provider Bash script, owner dashboard, and local tests; devnet deployment and real-wallet HTTPS/devnet integration planned.
+**Status:** all roadmap steps are complete: PAM/daemon authentication with session enforcement, Axum gateway, browser signing page, billing/access program, provider Bash script, owner dashboard, and local tests, plus a devnet deployment that real wallets use over public HTTPS.
 
-**Integrated target:** one existing Debian 13 VM, Solana devnet, native SOL, and the configured non-root Linux account (`ubuntu` in the demo).
+**Integrated target:** existing Linux servers (Ubuntu 26.04 in the [public deployment](infra/README.md#public-deployment); Debian 13 in the test VM), Solana devnet, native SOL, and the configured non-root Linux account (`ubuntu` in the demo).
 
 **Compatibility baseline:** [authentication contract v1](ssh/CONTRACTS.md) and the existing Rust implementation.
 
@@ -31,11 +31,11 @@ The owner pays for access to a server that the provider has already prepared and
 | --- | --- |
 | PAM module, daemon, and shared verification library | Implemented under `ssh/` |
 | Debian 13 QEMU/OpenSSH harness | Implemented, using synthetic gateway/RPC services and a command-line signer |
-| Solana billing/access program and provider Bash script | Implemented under `programs/`. Tested on LiteSVM against the auth-core decoder, and on a local validator through the daemon's RPC reader; not yet deployed to devnet |
-| Production gateway and browser signing page | Implemented locally; browser tests use provider doubles with real signatures; HTTPS and installed-wallet integration remains manual |
+| Solana billing/access program and provider Bash script | Implemented under `programs/`. Tested on LiteSVM against the auth-core decoder, and on a local validator through the daemon's RPC reader; [deployed to devnet](https://explorer.solana.com/address/FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY?cluster=devnet) |
+| Production gateway and browser signing page | Implemented; browser tests use provider doubles with real signatures; served over public HTTPS and verified manually with installed wallets |
 | Owner payment/access dashboard | Implemented in `frontend/` and served by the gateway; browser tests drive it against the program on a local validator with real signatures |
 
-Keep the current authentication code and its tests. New components must fit the existing PAM IPC, gateway API, signed bytes, account layouts, and PDA seeds. The contract remains provisional until real program/gateway integration is tested.
+Keep the current authentication code and its tests. New components must fit the existing PAM IPC, gateway API, signed bytes, account layouts, and PDA seeds. The devnet program and the production gateway use this contract together in the public deployment.
 
 The product excludes VPS ordering, inventory, automated provisioning, order tracking, a provider administration UI, a dedicated provider CLI, and an application database. Docker is not required; [compose.yaml](compose.yaml) optionally runs the gateway and frontend. Existing VM preparation scripts remain useful test tooling; payments never trigger VM preparation. General-purpose PAM integration beyond the current SSH use case is outside the first version.
 
@@ -155,7 +155,7 @@ The emitted signing URL is `/v1/sessions/{id}`. The production gateway should se
 
 [PlantUML source](docs/diagrams/ssh-login.puml)
 
-The detailed component diagram describes the existing PAM/daemon code. Its local external services remain fixtures. The Axum gateway and browser signer are implemented; installed wallets, HTTPS, and a deployed program still need integration.
+The detailed component diagram describes the existing PAM/daemon code. Its local external services remain fixtures. The Axum gateway and browser signer are implemented, and the public deployment uses them with installed wallets, HTTPS, and the devnet program.
 
 ![Existing SSH implementation](docs/diagrams/ssh-components.svg)
 
@@ -187,7 +187,7 @@ The daemon's JSON audit events record login decisions and ended sessions without
 
 ## Testing and acceptance
 
-The existing suite uses a Debian 13 QEMU VM, real OpenSSH/PAM/daemon code, simulated gateway/RPC services, and a command-line signer. It tests cryptography and authorization against synthetic accounts; it does not test actual payments, cluster finality, deployed-program compatibility, browser wallets, or HTTPS.
+The existing suite uses a Debian 13 QEMU VM, real OpenSSH/PAM/daemon code, simulated gateway/RPC services, and a command-line signer. It tests cryptography, authorization, and session enforcement against synthetic accounts. Actual payments, cluster finality, deployed-program compatibility, browser wallets, and HTTPS were verified manually on the public devnet deployment ([recorded transactions and outcomes](tests/README.md#devnet-demonstration)).
 
 Follow [the SSH prerequisites and complete test pipeline](ssh/README.md). From the repository root:
 
@@ -195,7 +195,7 @@ Follow [the SSH prerequisites and complete test pipeline](ssh/README.md). From t
 ./test-all.sh
 ```
 
-Keep this harness and its local VM preparation intact. The planned integrated suite uses the compatible devnet program, real HTTPS gateway, browser wallets, and the already prepared VM.
+Keep this harness and its local VM preparation intact.
 
 | Acceptance scenario | Expected result |
 | --- | --- |
@@ -209,7 +209,7 @@ Keep this harness and its local VM preparation intact. The planned integrated su
 
 Program tests must prove atomic transfer/state updates and compatibility with the existing decoder. Browser/gateway tests must preserve exact signed bytes and authenticated session endpoints. Integration must demonstrate purchase → finalized access → browser signature → SSH shell, followed by renewal and delegation scenarios. Keep evidence redacted; record program/cluster, payment IDs, transaction signatures, and outcomes.
 
-See [integration test scope](tests/README.md). No runtime tests need rerunning solely for this documentation/diagram simplification.
+See [integration tests and the devnet demonstration](tests/README.md).
 
 ## Solo-developer roadmap
 
@@ -218,6 +218,6 @@ Complete the remaining work sequentially. Build and test each component locally 
 1. **Compatible program and provider Bash script.** *Implemented and tested on a local validator, including the daemon's RPC reader.* Implement the documented accounts/instructions and payment receipts, plus a simple Bash script for manual provider registration and enable/disable operations. Test layouts against the existing decoder and payment/delegation behavior on a local validator. No dedicated provider CLI is an MVP deliverable.
 2. **Real gateway and browser signing.** The Axum session gateway and Phantom/Solflare page are implemented. Installed-wallet verification against devnet access records happens in step 4, without changing the existing PAM/daemon protocol. Keep fixture test controls out of this service.
 3. **Owner payment/access dashboard.** *Implemented and tested against a local validator.* Add purchase/renewal, expiry and SSH instructions, delegation/revocation, and pending-payment recovery. Read finalized state and submit wallet-signed transactions directly through RPC. Provider administration stays in the manually run Bash script.
-4. **Devnet deployment and integrated demonstration.** Deploy the program to devnet and register the prepared test server with the provider script. Serve the gateway over HTTPS and verify installed-wallet SSH login against the devnet access records. Exercise the acceptance scenarios with real wallets, verify console recovery, and document repeatable installation/run commands and observed limitations.
+4. **Devnet deployment and integrated demonstration.** *Done.* `./run.sh --devnet` deployed the program to devnet and registered two servers with the provider script. [infra/deploy.sh](infra/README.md#public-deployment) serves the gateway and dashboard over public HTTPS and installs wallet-only SSH on two Ubuntu 26.04 servers, where installed wallets bought, renewed, and delegated access and logged in. Open sessions also end when access ends. The [demonstration record](tests/README.md#devnet-demonstration) lists the transactions, outcomes, and the scenarios left to automated tests.
 
 Keep daemon authorization and PAM IPC unchanged; PAM presentation includes the signing URL and terminal QR code. Any integration mismatch should first be corrected in the new program, gateway, or browser client against the existing contract. Protocol migrations and broader platform features require a separate scope decision.

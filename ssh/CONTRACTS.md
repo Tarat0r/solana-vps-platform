@@ -1,10 +1,10 @@
 # Authentication contract v1
 
-This contract is provisional until a devnet program and the production gateway
-are tested together. The billing/access program's tests decode its accounts with
-auth-core and, on solana-test-validator, authorize logins through the daemon's
-finalized RPC reader. SSH fixtures exercise real daemon validation over synthetic
-RPC data.
+The devnet program, the production gateway, and real wallets use this contract
+together in the [public deployment](../infra/README.md#public-deployment). The
+billing/access program's tests decode its accounts with auth-core and, on
+solana-test-validator, authorize logins through the daemon's finalized RPC
+reader. SSH fixtures exercise real daemon validation over synthetic RPC data.
 
 ## Challenge and wallet proof
 

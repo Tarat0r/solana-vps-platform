@@ -7,11 +7,12 @@ The target product adds a small owner dashboard for native SOL payments, renewal
 ## Current status
 
 - **Implemented:** `pam_solana.so`, `solana-authd`, shared signature/account validation, and a Debian 13 QEMU/OpenSSH test harness.
-- **Implemented program:** the Anchor billing/access program and provider Bash script. LiteSVM tests check its accounts with the daemon's decoder. On a local validator, the script registers a server and the daemon's RPC reader authorizes logins from finalized program state. It is not yet deployed to devnet.
+- **Implemented program:** the Anchor billing/access program and provider Bash script. LiteSVM tests check its accounts with the daemon's decoder. On a local validator, the script registers a server and the daemon's RPC reader authorizes logins from finalized program state. It is [deployed to devnet](https://explorer.solana.com/address/FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY?cluster=devnet).
 - **Test fixtures:** simulated authentication gateway and Solana RPC responses, with a command-line wallet signer. These exercise real PAM, SSH, and cryptography, but do not deploy a program, transfer SOL, or test browser wallets.
 - **Implemented UI/gateway:** an Axum session gateway and React signing page for Phantom/Solflare, with a terminal QR code and signing link. Browser tests use provider doubles with real message signatures.
 - **Implemented dashboard:** the owner page buys and renews access with SOL, shows expiry, SSH instructions, and payment history, shares and revokes access, and recovers interrupted payments. Browser tests run it against the program on a local validator.
-- **Planned:** devnet deployment of the program and real-wallet HTTPS/devnet integration.
+- **Session enforcement:** open wallet logins are warned a minute before their access ends and are then terminated; revocation, a disabled server, or a new owner end them within about a minute.
+- **Public deployment on devnet:** the dashboard and signing page at `https://vps.oblaka.top:6441`, and two servers for sale (`ssh -p 6108 ubuntu@vps.oblaka.top` and `ssh -p 6107 ubuntu@vps.oblaka.top`), installed with [infra/deploy.sh](infra/README.md#public-deployment). Real-wallet purchase, renewal, delegation, login, and session expiry are [recorded with their transactions](tests/README.md#devnet-demonstration).
 
 The simplification preserves the existing authentication code and contracts. VPS ordering, inventory, automated provisioning, order tracking, and a database are outside the product scope. Docker is not required; an optional [compose file](backend/README.md#run-with-docker) runs the gateway and frontend.
 
@@ -72,4 +73,4 @@ The first run creates the provider key in `.run/devnet/` and stops with its addr
 
 To run only the gateway and frontend in Docker, see [Run with Docker](backend/README.md#run-with-docker).
 
-The eventual integrated demonstration uses Solana devnet and one existing Debian VM. The current fixture suite uses `localnet`. Expiry and revocation deny new logins and end open SSH sessions, after a one-minute warning at expiry.
+The automated suites use `localnet` and a Debian 13 VM; the public deployment uses devnet and Ubuntu 26.04 servers. Expiry and revocation deny new logins and end open SSH sessions, after a one-minute warning at expiry.

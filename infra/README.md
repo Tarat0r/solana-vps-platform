@@ -1,6 +1,6 @@
 # Server and service setup
 
-The first integrated target is one existing Debian 13 VM, Solana devnet, and the configured non-root Linux account (`ubuntu` in the demo). Prepare the server manually before selling access. Automated VPS provisioning and inventory management are outside scope; Docker is optional.
+The integrated target is existing Linux servers (Ubuntu 26.04 in the public deployment below), Solana devnet, and the configured non-root Linux account (`ubuntu` in the demo). Prepare the server manually before selling access. Automated VPS provisioning and inventory management are outside scope; Docker is optional.
 
 Existing installation artifacts live under [ssh/deploy/](../ssh/deploy/):
 

@@ -1,6 +1,6 @@
 # Billing and access program
 
-**Status: implemented and tested locally; not yet deployed to devnet.** Anchor 1.2.1 program `FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY` in [src/lib.rs](src/lib.rs). The daemon's RPC reader has authorized logins from it on `solana-test-validator`, but not yet on devnet.
+**Status: implemented, tested locally, and deployed to devnet.** Anchor 1.2.1 program [`FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY`](https://explorer.solana.com/address/FxQU6c2sjyAADR7vg3PXTZrxUaQNzV2Jh2w7PweEkfTY?cluster=devnet) in [src/lib.rs](src/lib.rs). The daemon's RPC reader authorizes logins from it on `solana-test-validator` and on devnet.
 
 - `ServerRecord`, `Subscription`, and `AccessGrant` use the exact discriminators, Borsh field order, PDA seeds, bumps, and grant-role values of [authentication contract v1](../../ssh/CONTRACTS.md). The tests decode every account with [the daemon's decoder](../../ssh/auth-core/src/accounts.rs), require byte-identical re-encoding, and make login decisions with `AccessSnapshot::authorize`.
 - `PaymentReceipt` (seeds `payment`, server record, payment ID) stores server, payer, payment ID, amount, `paid_at`, and resulting `paid_until`, then a bump. Receipts support payment recovery; the daemon does not read them.
@@ -42,7 +42,7 @@ npm run radar          # Radar static analysis; see below
 
 Build with `--arch v0`. Anchor 1.2.1 defaults to SBPF v3. LiteSVM accepts that build, but `solana-test-validator` 4.2.2 reports "Program is not deployed". v0 does not depend on SBPF v3 support on the target cluster.
 
-The program address keypair is `target/deploy/billing_access-keypair.json`. It is git-ignored. Keep it until the program is deployed. If it is lost before deployment, run `anchor keys sync` and republish the IDL so the new ID is used everywhere.
+The program address keypair is `target/deploy/billing_access-keypair.json`. It is git-ignored, and `./run.sh --devnet` needs it only for a first deployment; upgrades are signed by the upgrade authority. If it is lost before a deployment to a new cluster, run `anchor keys sync` and republish the IDL so the new ID is used everywhere.
 
 ## Static analysis
 
@@ -70,14 +70,16 @@ The script validates input in Bash. [provider-tx.ts](../scripts/provider-tx.ts) 
 
 ## Devnet deployment
 
-Deployment needs a funded devnet wallet: about 1.3 SOL of rent for the ~250 KB program, plus about as much again for a temporary deploy buffer that is refunded:
+The program is deployed to devnet at the address above (slot 511501728, [transaction](https://explorer.solana.com/tx/aokzDanRLjXHgbqdNwxLX4bicECihuqsQrG5RsmcwxCgkkm939nuLY8WndjaYtkDxp6QtdNof57VbwifTw6Kaqk?cluster=devnet)). Its upgrade authority, provider, and treasury is the provider key in the git-ignored `.run/devnet/provider.json`; keep a copy of that key outside the repository, since losing it means the program can no longer be upgraded and the servers can no longer be enabled or disabled.
+
+From the repository root, `./run.sh --devnet` repeats the deployment idempotently: it deploys the program, or upgrades it when the local build differs, and registers two servers once. A first deployment needs about 2.7 SOL in the provider key, of which about 1.3 SOL stays as the program account's rent; the deploy buffer's share is refunded, and leftover buffers from an interrupted deployment are closed before the next attempt. Fund the key at [faucet.solana.com](https://faucet.solana.com) when the script asks. [infra/deploy.sh](../../infra/README.md#public-deployment) then installs servers that use these registrations; it sets `program_id`, `provider_pubkey`, and each `server_id` in their `/etc/solana-auth/server.toml`.
+
+To deploy by hand instead:
 
 ```sh
 solana program deploy target/deploy/billing_access.so \
   --program-id target/deploy/billing_access-keypair.json --url devnet
 scripts/provider.sh register ...   # with the prepared server's server_id and owner
 ```
-
-Then set `program_id` and `provider_pubkey` in the server's `/etc/solana-auth/server.toml`.
 
 See [on-chain behavior](../../Architecture.md#on-chain-state-and-instructions) and [payment recovery](../../Architecture.md#payments-and-recovery).

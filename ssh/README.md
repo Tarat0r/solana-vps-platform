@@ -5,16 +5,16 @@ environment and TypeScript tests. PAM performs local IPC and displays a signing
 prompt; the daemon verifies Ed25519 signatures and finalized Solana account state.
 See [CONTRACTS.md](CONTRACTS.md) for wire formats.
 
-The gateway and RPC in the test environment are **synthetic fixtures**. No program
-is deployed, no SOL is transferred, and there is no browser wallet page. Account
-encoding remains provisional until integration with a compatible deployed
-program. The daemon has no fixture authorization bypass.
+The gateway and RPC in the test environment are **synthetic fixtures**: no program
+is deployed and no SOL is transferred there. The daemon has no fixture
+authorization bypass.
 
 The [reduced project architecture](../Architecture.md) keeps this implementation
-as its core. The Axum gateway and browser signing page are implemented. The compatible Solana
-program, owner dashboard, and real-wallet HTTPS/devnet integration remain planned. Provider setup uses a simple
-operator-run Bash script; the existing local VM preparation and test pipeline remain
-unchanged. See the [solo-developer roadmap](../Architecture.md#solo-developer-roadmap).
+as its core. The Axum gateway, browser signing page, Solana program, and owner
+dashboard are implemented, and the [public deployment](../infra/README.md#public-deployment)
+runs this daemon and PAM module against the devnet program with real wallets.
+Provider setup uses a simple operator-run Bash script; the local VM preparation and
+test pipeline remain unchanged.
 
 ## Authentication flow
 
