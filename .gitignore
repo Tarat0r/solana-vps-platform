@@ -8,3 +8,4 @@
 /.deploy/
 # Real deployment settings for infra/deploy.sh.
 /infra/deploy.env
+.claude
